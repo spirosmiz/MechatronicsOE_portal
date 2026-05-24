@@ -41,7 +41,7 @@ router.get('/:id', async (req, res: Response) => {
 router.post(
   '/',
   requireRole(UserRole.admin, UserRole.project_manager),
-  [body('name').trim().notEmpty(), body('customerId').optional().isUUID()],
+  [body('name').trim().notEmpty(), body('customerId').optional({ checkFalsy: true }).isUUID()],
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }

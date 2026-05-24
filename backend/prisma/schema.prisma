@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -17,22 +17,29 @@ model User {
 
   projects        Project[]
   serviceReports  ServiceReport[]
+  offersCreated   Offer[]       @relation("OfferCreator")
+  mediaUploaded   MediaFile[]   @relation("MediaUploader")
 
   @@map("users")
 }
 
 model Customer {
-  id            String   @id @default(uuid())
-  companyName   String   @map("company_name")
-  vatNumber     String   @unique @map("vat_number")
-  contactPerson String?  @map("contact_person")
-  email         String?
-  phone         String?
-  address       String
-  createdAt     DateTime @default(now()) @map("created_at")
+  id                     String   @id @default(uuid())
+  companyName            String   @map("company_name")
+  vatNumber              String   @unique @map("vat_number")
+  contactPerson          String?  @map("contact_person")
+  email                  String?
+  phone                  String?
+  address                String
+  createdAt              DateTime @default(now()) @map("created_at")
+  driveFolderId          String?  @map("drive_folder_id")
+  driveMediaFolderId     String?  @map("drive_media_folder_id")
+  driveOffersFolderId    String?  @map("drive_offers_folder_id")
+  driveContractsFolderId String?  @map("drive_contracts_folder_id")
 
   machines  Machine[]
   projects  Project[]
+  offers    Offer[]
 
   @@map("customers")
 }
@@ -56,6 +63,7 @@ model Machine {
 model Inventory {
   id               String   @id @default(uuid())
   partNumber       String   @unique @map("part_number")
+  brand            String?
   name             String
   description      String?
   stockQuantity    Int      @default(0) @map("stock_quantity")
@@ -63,10 +71,18 @@ model Inventory {
   unitCost         Decimal  @map("unit_cost")
   unitPrice        Decimal  @map("unit_price")
   ceCertified      Boolean  @default(true) @map("ce_certified")
+  driveFolderId    String?  @map("drive_folder_id")
 
   projectMaterials ProjectMaterial[]
 
   @@map("inventory")
+}
+
+model DriveConfig {
+  key   String @id
+  value String
+
+  @@map("drive_config")
 }
 
 model Project {
@@ -119,4 +135,58 @@ model ServiceReport {
   technician User?   @relation(fields: [technicianId], references: [id])
 
   @@map("service_reports")
+}
+
+// ─── Offers ──────────────────────────────────────────────────────────────────
+
+model Offer {
+  id            String   @id @default(uuid())
+  customerId    String?  @map("customer_id")
+  title         String
+  description   String?
+  offerDate     DateTime @default(now()) @map("offer_date")
+  validUntil    DateTime @map("valid_until")
+  status        String   @default("draft")        // draft | sent | accepted | rejected | expired
+  paymentStatus String   @default("unpaid") @map("payment_status")  // unpaid | invoiced | partially_paid | paid
+  totalAmount   Decimal  @map("total_amount")
+  notes         String?
+  createdBy     String?  @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  creator  User?       @relation("OfferCreator", fields: [createdBy], references: [id])
+  items    OfferItem[]
+
+  @@map("offers")
+}
+
+model OfferItem {
+  id          String  @id @default(uuid())
+  offerId     String  @map("offer_id")
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @map("unit_price")
+
+  offer Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@map("offer_items")
+}
+
+// ─── Media ────────────────────────────────────────────────────────────────────
+
+model MediaFile {
+  id           String   @id @default(uuid())
+  entityType   String   @map("entity_type")   // 'customer' | 'machine'
+  entityId     String   @map("entity_id")
+  driveFileId  String   @map("drive_file_id")
+  name         String
+  mimeType     String   @map("mime_type")
+  driveUrl     String   @map("drive_url")
+  thumbnailUrl String?  @map("thumbnail_url")
+  uploadedBy   String?  @map("uploaded_by")
+  uploadedAt   DateTime @default(now()) @map("uploaded_at")
+
+  uploader User? @relation("MediaUploader", fields: [uploadedBy], references: [id])
+
+  @@map("media_files")
 }

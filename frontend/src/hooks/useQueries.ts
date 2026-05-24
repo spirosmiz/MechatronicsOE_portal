@@ -1,9 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   customersApi, machinesApi, inventoryApi, projectsApi,
-  serviceReportsApi, usersApi,
+  serviceReportsApi, usersApi, offersApi, mediaApi,
 } from '../lib/api';
-import { Customer, Machine, InventoryItem, Project, ServiceReport, User, DashboardStats } from '../types';
+import { Customer, Machine, InventoryItem, Project, ServiceReport, User, DashboardStats, Offer, OfferStats, MediaFile } from '../types';
 
 // ─── Keys ───────────────────────────────────────────────────────────────────
 export const KEYS = {
@@ -19,6 +19,10 @@ export const KEYS = {
   serviceReports: (params?: object) => ['service-reports', params ?? {}] as const,
   serviceReport: (id: string) => ['service-reports', 'detail', id] as const,
   users: ['users'] as const,
+  offers: ['offers'] as const,
+  offer: (id: string) => ['offers', id] as const,
+  offerStats: ['offer-stats'] as const,
+  media: (entityType: string, entityId: string) => ['media', entityType, entityId] as const,
 };
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -69,6 +73,14 @@ export function useDeleteCustomer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => customersApi.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.customers }),
+  });
+}
+
+export function useSetupCustomerDrive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => customersApi.setupDrive(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.customers }),
   });
 }
@@ -146,6 +158,14 @@ export function useDeleteInventoryItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => inventoryApi.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.inventory }),
+  });
+}
+
+export function useSetupInventoryDrive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => inventoryApi.setupDrive(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.inventory }),
   });
 }
@@ -270,5 +290,119 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (id: string) => usersApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.users }),
+  });
+}
+
+// ─── Offers ───────────────────────────────────────────────────────────────────
+export function useOffers() {
+  return useQuery<Offer[]>({
+    queryKey: KEYS.offers,
+    queryFn: () => offersApi.list().then((r) => r.data),
+  });
+}
+
+export function useOffer(id: string) {
+  return useQuery<Offer>({
+    queryKey: KEYS.offer(id),
+    queryFn: () => offersApi.get(id).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
+export function useOfferStats() {
+  return useQuery<OfferStats>({
+    queryKey: KEYS.offerStats,
+    queryFn: () => offersApi.stats().then((r) => r.data),
+  });
+}
+
+export function useCreateOffer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => offersApi.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.offers });
+      qc.invalidateQueries({ queryKey: KEYS.offerStats });
+    },
+  });
+}
+
+export function useUpdateOffer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      offersApi.update(id, data),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: KEYS.offers });
+      qc.invalidateQueries({ queryKey: KEYS.offer(id) });
+    },
+  });
+}
+
+export function useUpdateOfferStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      offersApi.updateStatus(id, status),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: KEYS.offers });
+      qc.invalidateQueries({ queryKey: KEYS.offer(id) });
+      qc.invalidateQueries({ queryKey: KEYS.offerStats });
+    },
+  });
+}
+
+export function useUpdateOfferPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, paymentStatus }: { id: string; paymentStatus: string }) =>
+      offersApi.updatePayment(id, paymentStatus),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: KEYS.offers });
+      qc.invalidateQueries({ queryKey: KEYS.offer(id) });
+      qc.invalidateQueries({ queryKey: KEYS.offerStats });
+    },
+  });
+}
+
+export function useDeleteOffer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => offersApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.offers });
+      qc.invalidateQueries({ queryKey: KEYS.offerStats });
+    },
+  });
+}
+
+// ─── Media ────────────────────────────────────────────────────────────────────
+export function useMedia(entityType: string, entityId: string) {
+  return useQuery<MediaFile[]>({
+    queryKey: KEYS.media(entityType, entityId),
+    queryFn: () => mediaApi.list(entityType, entityId).then((r) => r.data),
+    enabled: !!entityType && !!entityId,
+  });
+}
+
+export function useUploadMedia() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ entityType, entityId, file }: { entityType: string; entityId: string; file: File }) =>
+      mediaApi.upload(entityType, entityId, file),
+    onSuccess: (_data, { entityType, entityId }) => {
+      qc.invalidateQueries({ queryKey: KEYS.media(entityType, entityId) });
+    },
+  });
+}
+
+export function useDeleteMedia() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: string; entityType: string; entityId: string }) =>
+      mediaApi.delete(id),
+    onSuccess: (_data, { entityType, entityId }) => {
+      qc.invalidateQueries({ queryKey: KEYS.media(entityType, entityId) });
+    },
   });
 }

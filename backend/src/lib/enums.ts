@@ -25,3 +25,22 @@ export const StatusType = {
 } as const;
 
 export type StatusType = (typeof StatusType)[keyof typeof StatusType];
+
+export const OfferStatus = {
+  draft: 'draft',
+  sent: 'sent',
+  accepted: 'accepted',
+  rejected: 'rejected',
+  expired: 'expired',
+} as const;
+
+export type OfferStatus = (typeof OfferStatus)[keyof typeof OfferStatus];
+
+export const PaymentStatus = {
+  unpaid: 'unpaid',
+  invoiced: 'invoiced',
+  partially_paid: 'partially_paid',
+  paid: 'paid',
+} as const;
+
+export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus];

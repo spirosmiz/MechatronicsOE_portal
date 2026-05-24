@@ -1,6 +1,8 @@
 export type UserRole = 'admin' | 'project_manager' | 'technician';
 export type JobType = 'maintenance' | 'electrical_upgrade' | 'retrofit' | 'reconstruction';
 export type StatusType = 'draft' | 'pending_approval' | 'approved' | 'in_progress' | 'completed' | 'cancelled';
+export type OfferStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired';
+export type PaymentStatus = 'unpaid' | 'invoiced' | 'partially_paid' | 'paid';
 
 export interface User {
   id: string;
@@ -19,6 +21,10 @@ export interface Customer {
   phone?: string;
   address: string;
   createdAt: string;
+  driveFolderId?: string;
+  driveMediaFolderId?: string;
+  driveOffersFolderId?: string;
+  driveContractsFolderId?: string;
   _count?: { machines: number; projects: number };
 }
 
@@ -37,6 +43,7 @@ export interface Machine {
 export interface InventoryItem {
   id: string;
   partNumber: string;
+  brand?: string;
   name: string;
   description?: string;
   stockQuantity: number;
@@ -44,6 +51,7 @@ export interface InventoryItem {
   unitCost: string | number;
   unitPrice: string | number;
   ceCertified: boolean;
+  driveFolderId?: string;
   isLowStock?: boolean;
 }
 
@@ -109,4 +117,56 @@ export interface AuthUser {
   name: string;
   email: string;
   role: UserRole;
+}
+
+// ─── Offers ───────────────────────────────────────────────────────────────────
+
+export interface OfferItem {
+  id: string;
+  offerId: string;
+  description: string;
+  quantity: number;
+  unitPrice: string | number;
+}
+
+export interface Offer {
+  id: string;
+  customerId?: string;
+  customer?: { id: string; companyName: string; email?: string; contactPerson?: string };
+  title: string;
+  description?: string;
+  offerDate: string;
+  validUntil: string;
+  status: OfferStatus;
+  paymentStatus: PaymentStatus;
+  totalAmount: string | number;
+  notes?: string;
+  createdBy?: string;
+  creator?: { id: string; name: string };
+  createdAt: string;
+  items?: OfferItem[];
+  _count?: { items: number };
+}
+
+export interface OfferStats {
+  byStatus: { status: OfferStatus; _count: number }[];
+  byPayment: { paymentStatus: PaymentStatus; _count: number }[];
+  totalValue: string | null;
+  pendingCount: number;
+}
+
+// ─── Media ────────────────────────────────────────────────────────────────────
+
+export interface MediaFile {
+  id: string;
+  entityType: string;
+  entityId: string;
+  driveFileId: string;
+  name: string;
+  mimeType: string;
+  driveUrl: string;
+  thumbnailUrl?: string;
+  uploadedBy?: string;
+  uploader?: { id: string; name: string };
+  uploadedAt: string;
 }

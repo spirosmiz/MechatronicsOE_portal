@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Plus, Search, Package, Edit, Trash2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Plus, Search, Package, Edit, Trash2, AlertTriangle, ShieldCheck, Images, FolderOpen, FolderPlus } from 'lucide-react';
 import {
-  useInventory, useCreateInventoryItem, useUpdateInventoryItem, useDeleteInventoryItem,
+  useInventory, useCreateInventoryItem, useUpdateInventoryItem, useDeleteInventoryItem, useSetupInventoryDrive, KEYS,
 } from '@/hooks/useQueries';
 import { inventoryApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -13,12 +13,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { MediaGalleryDialog } from '@/components/ui/MediaGallery';
 import { formatCurrency } from '@/lib/utils';
 import { InventoryItem } from '@/types';
-import { KEYS } from '@/hooks/useQueries';
 
 const EMPTY = {
-  partNumber: '', name: '', description: '', stockQuantity: '0',
+  partNumber: '', brand: '', name: '', description: '', stockQuantity: '0',
   safetyStockLevel: '5', unitCost: '', unitPrice: '', ceCertified: 'true',
 };
 
@@ -27,6 +27,7 @@ export function InventoryPage() {
   const createMut = useCreateInventoryItem();
   const updateMut = useUpdateInventoryItem();
   const deleteMut = useDeleteInventoryItem();
+  const setupDriveMut = useSetupInventoryDrive();
   const qc = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -40,6 +41,7 @@ export function InventoryPage() {
   const [stockAdj, setStockAdj] = useState('');
   const [editing, setEditing] = useState<InventoryItem | null>(null);
   const [form, setForm] = useState<typeof EMPTY>(EMPTY);
+  const [mediaTarget, setMediaTarget] = useState<{ id: string; name: string } | null>(null);
 
   const filtered = items.filter((i) => {
     const matchSearch =
@@ -54,7 +56,7 @@ export function InventoryPage() {
   function openEdit(item: InventoryItem) {
     setEditing(item);
     setForm({
-      partNumber: item.partNumber, name: item.name, description: item.description ?? '',
+      partNumber: item.partNumber, brand: item.brand ?? '', name: item.name, description: item.description ?? '',
       stockQuantity: String(item.stockQuantity), safetyStockLevel: String(item.safetyStockLevel),
       unitCost: String(item.unitCost), unitPrice: String(item.unitPrice),
       ceCertified: String(item.ceCertified),
@@ -65,7 +67,8 @@ export function InventoryPage() {
   async function handleSave() {
     try {
       const data: Record<string, unknown> = {
-        partNumber: form.partNumber, name: form.name, description: form.description || undefined,
+        partNumber: form.partNumber, brand: form.brand || undefined, name: form.name,
+        description: form.description || undefined,
         stockQuantity: parseInt(form.stockQuantity), safetyStockLevel: parseInt(form.safetyStockLevel),
         unitCost: parseFloat(form.unitCost), unitPrice: parseFloat(form.unitPrice),
         ceCertified: form.ceCertified === 'true',
@@ -148,6 +151,7 @@ export function InventoryPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Part Number</TableHead>
+              <TableHead>Brand</TableHead>
               <TableHead>Name</TableHead>
               <TableHead className="text-right">Stock</TableHead>
               <TableHead className="text-right">Safety Level</TableHead>
@@ -161,14 +165,14 @@ export function InventoryPage() {
             {isLoading ? (
               [...Array(5)].map((_, i) => (
                 <TableRow key={i}>
-                  {[...Array(8)].map((_, j) => (
+                  {[...Array(9)].map((_, j) => (
                     <TableCell key={j}><div className="h-4 bg-gray-100 rounded animate-pulse" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
                   <Package className="w-10 h-10 mx-auto mb-2 opacity-30" />
                   No items found
                 </TableCell>
@@ -177,6 +181,7 @@ export function InventoryPage() {
               filtered.map((item) => (
                 <TableRow key={item.id} className={item.isLowStock ? 'bg-amber-50' : ''}>
                   <TableCell className="font-mono text-xs">{item.partNumber}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{item.brand ?? '—'}</TableCell>
                   <TableCell>
                     <div>
                       <p className="font-medium text-sm">{item.name}</p>
@@ -198,7 +203,29 @@ export function InventoryPage() {
                       : <span className="text-xs text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-1 justify-end">
+                    <div className="flex gap-1 justify-end items-center">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-blue-600" title="Media" onClick={() => setMediaTarget({ id: item.id, name: item.name })}>
+                        <Images className="w-3 h-3" />
+                      </Button>
+                      {item.driveFolderId ? (
+                        <a href={`https://drive.google.com/drive/folders/${item.driveFolderId}`} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700"
+                          title="Open Drive folder">
+                          <FolderOpen className="w-3 h-3" />
+                        </a>
+                      ) : canEdit && (
+                        <button
+                          className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 disabled:opacity-50"
+                          disabled={setupDriveMut.isPending}
+                          title="Setup Drive folder"
+                          onClick={() => setupDriveMut.mutate(item.id, {
+                            onSuccess: () => toast({ title: `Drive folder created for ${item.name}` }),
+                            onError: () => toast({ title: 'Failed to create Drive folder', variant: 'destructive' }),
+                          })}
+                        >
+                          <FolderPlus className="w-3 h-3" />
+                        </button>
+                      )}
                       {canEdit && (
                         <>
                           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setStockItem(item); setStockAdj(''); setStockOpen(true); }}>
@@ -233,6 +260,10 @@ export function InventoryPage() {
               <Input value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.target.value })} />
             </div>
             <div className="space-y-2">
+              <Label>Brand</Label>
+              <Input value={form.brand} placeholder="e.g. Siemens" onChange={(e) => setForm({ ...form, brand: e.target.value })} />
+            </div>
+            <div className="col-span-2 space-y-2">
               <Label>Name *</Label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
@@ -295,6 +326,16 @@ export function InventoryPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {mediaTarget && (
+        <MediaGalleryDialog
+          open={!!mediaTarget}
+          onClose={() => setMediaTarget(null)}
+          title={mediaTarget.name}
+          entityType="inventory"
+          entityId={mediaTarget.id}
+        />
+      )}
     </div>
   );
 }

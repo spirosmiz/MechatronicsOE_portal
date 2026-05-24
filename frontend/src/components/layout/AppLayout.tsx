@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Building2, Cpu, Package, FolderOpen,
-  FileText, LogOut, Menu, X, Settings,
+  FileText, LogOut, Menu, X, Settings, FileSignature,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
@@ -15,6 +15,7 @@ const navItems = [
   { to: '/inventory', icon: Package, label: 'Inventory' },
   { to: '/projects', icon: FolderOpen, label: 'Projects' },
   { to: '/service-reports', icon: FileText, label: 'Service Reports' },
+  { to: '/offers', icon: FileSignature, label: 'Offers' },
 ];
 
 const adminNavItems = [

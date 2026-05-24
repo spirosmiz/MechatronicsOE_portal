@@ -1,6 +1,10 @@
 # Εξαίρεση των node_modules και από τα δύο projects
 **/node_modules/
 
+# Build artifacts
+**/dist/
+frontend/dist/
+
 # Εξαίρεση της τοπικής SQLite βάσης (άλλαξε το όνομα αν το έχεις αλλιώς)
 **/database.sqlite
 **/*.sqlite

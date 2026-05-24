@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Building2, Edit, Trash2, Phone, Mail, MapPin } from 'lucide-react';
-import { useCustomers, useCreateCustomer, useUpdateCustomer, useDeleteCustomer } from '@/hooks/useQueries';
+import { Plus, Search, Building2, Edit, Trash2, Phone, Mail, MapPin, Images, FolderOpen, FolderPlus } from 'lucide-react';
+import { MediaGalleryDialog } from '@/components/ui/MediaGallery';
+import { useCustomers, useCreateCustomer, useUpdateCustomer, useDeleteCustomer, useSetupCustomerDrive } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,7 @@ export function CustomersPage() {
   const createMut = useCreateCustomer();
   const updateMut = useUpdateCustomer();
   const deleteMut = useDeleteCustomer();
+  const setupDriveMut = useSetupCustomerDrive();
   const { user } = useAuth();
   const { toast } = useToast();
   const canEdit = user?.role === 'admin' || user?.role === 'project_manager';
@@ -27,6 +29,7 @@ export function CustomersPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [form, setForm] = useState<Partial<Customer>>(EMPTY);
+  const [mediaTarget, setMediaTarget] = useState<{ id: string; name: string } | null>(null);
 
   const filtered = customers.filter(
     (c) =>
@@ -110,16 +113,21 @@ export function CustomersPage() {
                       <p className="text-xs text-muted-foreground">VAT: {c.vatNumber}</p>
                     </div>
                   </div>
-                  {canEdit && (
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(c)}>
-                        <Edit className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(c.id, c.companyName)}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  )}
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-blue-600" title="Media" onClick={() => setMediaTarget({ id: c.id, name: c.companyName })}>
+                      <Images className="w-3.5 h-3.5" />
+                    </Button>
+                    {canEdit && (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(c)}>
+                          <Edit className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(c.id, c.companyName)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-1.5 text-sm">
                   {c.contactPerson && <p className="text-muted-foreground">{c.contactPerson}</p>}
@@ -138,14 +146,64 @@ export function CustomersPage() {
                     <span className="line-clamp-2 text-xs">{c.address}</span>
                   </div>
                 </div>
-                <div className="flex gap-4 mt-4 pt-3 border-t text-xs text-muted-foreground">
-                  <span>{c._count?.machines ?? 0} machines</span>
-                  <span>{c._count?.projects ?? 0} projects</span>
+                <div className="mt-4 pt-3 border-t space-y-2">
+                  <div className="flex gap-4 text-xs text-muted-foreground">
+                    <span>{c._count?.machines ?? 0} machines</span>
+                    <span>{c._count?.projects ?? 0} projects</span>
+                  </div>
+                  {c.driveFolderId ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      <a href={`https://drive.google.com/drive/folders/${c.driveFolderId}`} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700">
+                        <FolderOpen className="w-3 h-3" /> Drive
+                      </a>
+                      {c.driveMediaFolderId && (
+                        <a href={`https://drive.google.com/drive/folders/${c.driveMediaFolderId}`} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700">
+                          <Images className="w-3 h-3" /> Media
+                        </a>
+                      )}
+                      {c.driveOffersFolderId && (
+                        <a href={`https://drive.google.com/drive/folders/${c.driveOffersFolderId}`} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-green-50 hover:bg-green-100 text-green-700">
+                          <FolderOpen className="w-3 h-3" /> Offers
+                        </a>
+                      )}
+                      {c.driveContractsFolderId && (
+                        <a href={`https://drive.google.com/drive/folders/${c.driveContractsFolderId}`} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-purple-50 hover:bg-purple-100 text-purple-700">
+                          <FolderOpen className="w-3 h-3" /> Contracts
+                        </a>
+                      )}
+                    </div>
+                  ) : canEdit && (
+                    <button
+                      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 disabled:opacity-50"
+                      disabled={setupDriveMut.isPending}
+                      onClick={() => setupDriveMut.mutate(c.id, {
+                        onSuccess: () => toast({ title: `Drive folders created for ${c.companyName}` }),
+                        onError: () => toast({ title: 'Failed to create Drive folders', variant: 'destructive' }),
+                      })}
+                    >
+                      <FolderPlus className="w-3 h-3" />
+                      {setupDriveMut.isPending ? 'Creating…' : 'Setup Drive folders'}
+                    </button>
+                  )}
                 </div>
               </CardContent>
             </Card>
           ))}
         </div>
+      )}
+
+      {mediaTarget && (
+        <MediaGalleryDialog
+          open={!!mediaTarget}
+          onClose={() => setMediaTarget(null)}
+          title={mediaTarget.name}
+          entityType="customer"
+          entityId={mediaTarget.id}
+        />
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>

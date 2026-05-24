@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Cpu, Edit, Trash2 } from 'lucide-react';
+import { Plus, Search, Cpu, Edit, Trash2, Images } from 'lucide-react';
+import { MediaGalleryDialog } from '@/components/ui/MediaGallery';
 import { useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, useCustomers } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
@@ -29,6 +30,7 @@ export function MachinesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Machine | null>(null);
   const [form, setForm] = useState<typeof EMPTY & { customerId: string }>(EMPTY);
+  const [mediaTarget, setMediaTarget] = useState<{ id: string; name: string } | null>(null);
 
   const filtered = machines.filter(
     (m) =>
@@ -136,16 +138,21 @@ export function MachinesPage() {
                       {m.model && <p className="text-xs text-muted-foreground">{m.model}</p>}
                     </div>
                   </div>
-                  {canEdit && (
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(m)}>
-                        <Edit className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(m.id, m.name)}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  )}
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-blue-600" title="Media" onClick={() => setMediaTarget({ id: m.id, name: m.name })}>
+                      <Images className="w-3.5 h-3.5" />
+                    </Button>
+                    {canEdit && (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(m)}>
+                          <Edit className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(m.id, m.name)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-1 text-xs text-muted-foreground">
                   {m.manufacturer && <p>Manufacturer: <span className="text-foreground">{m.manufacturer}</span></p>}
@@ -176,6 +183,16 @@ export function MachinesPage() {
             </Card>
           ))}
         </div>
+      )}
+
+      {mediaTarget && (
+        <MediaGalleryDialog
+          open={!!mediaTarget}
+          onClose={() => setMediaTarget(null)}
+          title={mediaTarget.name}
+          entityType="machine"
+          entityId={mediaTarget.id}
+        />
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
