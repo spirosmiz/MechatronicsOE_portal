@@ -1,0 +1,4 @@
+version: '3.9'
+
+# PostgreSQL removed — database is now SQLite (file:./backend/prisma/dev.db)
+# Docker is no longer required to run this application locally.

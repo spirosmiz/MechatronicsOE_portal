@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  name           String
+  email          String   @unique
+  passwordHash   String   @map("password_hash")
+  role           String   @default("technician")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  projects        Project[]
+  serviceReports  ServiceReport[]
+
+  @@map("users")
+}
+
+model Customer {
+  id            String   @id @default(uuid())
+  companyName   String   @map("company_name")
+  vatNumber     String   @unique @map("vat_number")
+  contactPerson String?  @map("contact_person")
+  email         String?
+  phone         String?
+  address       String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  machines  Machine[]
+  projects  Project[]
+
+  @@map("customers")
+}
+
+model Machine {
+  id             String   @id @default(uuid())
+  customerId     String?  @map("customer_id")
+  name           String
+  model          String?
+  serialNumber   String?  @unique @map("serial_number")
+  manufacturer   String?
+  technicalSpecs String?  @map("technical_specs")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  customer  Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  projects  Project[]
+
+  @@map("machines")
+}
+
+model Inventory {
+  id               String   @id @default(uuid())
+  partNumber       String   @unique @map("part_number")
+  name             String
+  description      String?
+  stockQuantity    Int      @default(0) @map("stock_quantity")
+  safetyStockLevel Int      @default(5) @map("safety_stock_level")
+  unitCost         Decimal  @map("unit_cost")
+  unitPrice        Decimal  @map("unit_price")
+  ceCertified      Boolean  @default(true) @map("ce_certified")
+
+  projectMaterials ProjectMaterial[]
+
+  @@map("inventory")
+}
+
+model Project {
+  id                   String   @id @default(uuid())
+  customerId           String?  @map("customer_id")
+  machineId            String?  @map("machine_id")
+  title                String
+  type                 String
+  status               String   @default("draft")
+  estimatedLaborHours  Decimal  @default(0.00) @map("estimated_labor_hours")
+  actualLaborHours     Decimal  @default(0.00) @map("actual_labor_hours")
+  quotedTotalPrice     Decimal  @map("quoted_total_price")
+  termsAndConditions   String?  @map("terms_and_conditions")
+  createdBy            String?  @map("created_by")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  customer         Customer?         @relation(fields: [customerId], references: [id])
+  machine          Machine?          @relation(fields: [machineId], references: [id])
+  creator          User?             @relation(fields: [createdBy], references: [id])
+  projectMaterials ProjectMaterial[]
+  serviceReports   ServiceReport[]
+
+  @@map("projects")
+}
+
+model ProjectMaterial {
+  id               String  @id @default(uuid())
+  projectId        String  @map("project_id")
+  inventoryId      String? @map("inventory_id")
+  quantityRequired Int     @map("quantity_required")
+  unitCostAtQuote  Decimal @map("unit_cost_at_quote")
+  unitPriceAtQuote Decimal @map("unit_price_at_quote")
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inventory Inventory? @relation(fields: [inventoryId], references: [id])
+
+  @@map("project_materials")
+}
+
+model ServiceReport {
+  id               String   @id @default(uuid())
+  projectId        String   @map("project_id")
+  technicianId     String?  @map("technician_id")
+  workPerformed    String   @map("work_performed")
+  hoursLogged      Decimal  @map("hours_logged")
+  digitalSignature String?  @map("digital_signature")
+  submittedAt      DateTime @default(now()) @map("submitted_at")
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  technician User?   @relation(fields: [technicianId], references: [id])
+
+  @@map("service_reports")
+}
