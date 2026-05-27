@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { ArrowLeft, Building2, Cpu, FileSignature, FolderOpen, Mail, MapPin, Phone, Edit, Trash2, Images, FolderPlus } from 'lucide-react';
 import { useCustomer, useMachines, useOffers, useProjects, useDeleteCustomer, useUpdateCustomer, useSetupCustomerDrive } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
@@ -33,11 +33,12 @@ const PROJECT_STATUS_COLORS: Record<string, string> = {
 export function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
   const canEdit = user?.role === 'admin' || user?.role === 'project_manager';
 
-  const [tab, setTab] = useState<Tab>('machines');
+  const [tab, setTab] = useState<Tab>((location.state as { tab?: Tab })?.tab ?? 'machines');
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<Partial<Customer>>({});
   const [mediaOpen, setMediaOpen] = useState(false);

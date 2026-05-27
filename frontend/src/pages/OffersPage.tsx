@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Plus, Search, FileSignature, Edit, Trash2, ChevronDown,
   CalendarClock, AlertTriangle, CheckCircle2, Clock, Cpu,
+  FileDown, FileText, ExternalLink,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -10,6 +11,7 @@ import {
 } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
+import { offersApi } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,7 +30,28 @@ import {
 type FilterStatus = 'all' | 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired';
 type FilterPayment = 'all' | 'unpaid' | 'invoiced' | 'partially_paid' | 'paid';
 
-interface LineItem { description: string; quantity: number; unitPrice: string }
+interface CostBreakdown {
+  designHours: string;
+  designRate: string;
+  serviceHours: string;
+  serviceRate: string;
+  transportHours: string;
+  transportRate: string;
+  machiningCost: string;
+  partsMode: 'lump' | 'itemized';
+  partsLumpSum: string;
+  partsItems: { description: string; amount: string }[];
+}
+
+const EMPTY_COSTS: CostBreakdown = {
+  designHours: '', designRate: '',
+  serviceHours: '', serviceRate: '',
+  transportHours: '', transportRate: '',
+  machiningCost: '',
+  partsMode: 'lump',
+  partsLumpSum: '',
+  partsItems: [{ description: '', amount: '' }],
+};
 
 const EMPTY_FORM = {
   customerId: '',
@@ -37,7 +60,6 @@ const EMPTY_FORM = {
   description: '',
   offerDate: new Date().toISOString().split('T')[0],
   validUntil: '',
-  totalAmount: '',
   notes: '',
 };
 
@@ -46,8 +68,7 @@ function isOverdue(offer: Offer) {
 }
 
 function daysUntil(dateStr: string) {
-  const diff = Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
-  return diff;
+  return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
 }
 
 export function OffersPage() {
@@ -71,7 +92,7 @@ export function OffersPage() {
   const [editing, setEditing] = useState<Offer | null>(null);
   const [selected, setSelected] = useState<Offer | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
-  const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [costs, setCosts] = useState<CostBreakdown>(EMPTY_COSTS);
 
   const filtered = offers.filter((o) => {
     const matchSearch =
@@ -82,7 +103,6 @@ export function OffersPage() {
     return matchSearch && matchStatus && matchPayment;
   });
 
-  // KPI counts
   const sentCount = offers.filter((o) => o.status === 'sent').length;
   const overdueCount = offers.filter(isOverdue).length;
   const acceptedCount = offers.filter((o) => o.status === 'accepted').length;
@@ -92,10 +112,21 @@ export function OffersPage() {
 
   const customerMachines = allMachines.filter((m) => m.customerId === form.customerId);
 
+  function computeTotal() {
+    const design = Number(costs.designHours || 0) * Number(costs.designRate || 0);
+    const service = Number(costs.serviceHours || 0) * Number(costs.serviceRate || 0);
+    const transport = Number(costs.transportHours || 0) * Number(costs.transportRate || 0);
+    const machining = Number(costs.machiningCost || 0);
+    const parts = costs.partsMode === 'lump'
+      ? Number(costs.partsLumpSum || 0)
+      : costs.partsItems.reduce((s, p) => s + Number(p.amount || 0), 0);
+    return design + service + transport + machining + parts;
+  }
+
   function openCreate() {
     setEditing(null);
     setForm({ ...EMPTY_FORM, offerDate: new Date().toISOString().split('T')[0] });
-    setLineItems([{ description: '', quantity: 1, unitPrice: '' }]);
+    setCosts(EMPTY_COSTS);
     setOpen(true);
   }
 
@@ -108,13 +139,38 @@ export function OffersPage() {
       description: o.description ?? '',
       offerDate: o.offerDate.split('T')[0],
       validUntil: o.validUntil.split('T')[0],
-      totalAmount: String(o.totalAmount),
       notes: o.notes ?? '',
     });
-    setLineItems(
-      o.items?.map((i) => ({ description: i.description, quantity: i.quantity, unitPrice: String(i.unitPrice) }))
-        ?? [{ description: '', quantity: 1, unitPrice: '' }]
-    );
+
+    const items = o.items ?? [];
+    const parsed: CostBreakdown = { ...EMPTY_COSTS, partsItems: [] };
+
+    for (const item of items) {
+      const desc = item.description;
+      if (desc.startsWith('Design Engineering')) {
+        parsed.designHours = String(item.quantity);
+        parsed.designRate = String(item.unitPrice);
+      } else if (desc.startsWith('Service / Installation')) {
+        parsed.serviceHours = String(item.quantity);
+        parsed.serviceRate = String(item.unitPrice);
+      } else if (desc.startsWith('Transportation')) {
+        parsed.transportHours = String(item.quantity);
+        parsed.transportRate = String(item.unitPrice);
+      } else if (desc === 'Machining') {
+        parsed.machiningCost = String(item.unitPrice);
+      } else if (desc === 'Parts') {
+        parsed.partsMode = 'lump';
+        parsed.partsLumpSum = String(item.unitPrice);
+      } else if (desc.startsWith('Parts — ')) {
+        parsed.partsMode = 'itemized';
+        parsed.partsItems.push({ description: desc.slice(8), amount: String(item.unitPrice) });
+      }
+    }
+
+    if (parsed.partsItems.length === 0) {
+      parsed.partsItems = [{ description: '', amount: '' }];
+    }
+    setCosts(parsed);
     setOpen(true);
   }
 
@@ -123,25 +179,93 @@ export function OffersPage() {
     setDetailOpen(true);
   }
 
-  function addLineItem() {
-    setLineItems([...lineItems, { description: '', quantity: 1, unitPrice: '' }]);
+  async function downloadFile(id: string, title: string, type: 'pdf' | 'docx') {
+    try {
+      const res = type === 'pdf'
+        ? await offersApi.downloadPdf(id)
+        : await offersApi.downloadDocx(id);
+      const ext = type === 'pdf' ? 'pdf' : 'docx';
+      const mime = type === 'pdf'
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      const url = URL.createObjectURL(new Blob([res.data], { type: mime }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title} - Offer.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast({ title: `Failed to download ${type.toUpperCase()}`, variant: 'destructive' });
+    }
   }
 
-  function removeLineItem(i: number) {
-    setLineItems(lineItems.filter((_, idx) => idx !== i));
+  function addPartsItem() {
+    setCosts({ ...costs, partsItems: [...costs.partsItems, { description: '', amount: '' }] });
   }
 
-  function updateLineItem(i: number, field: keyof LineItem, value: string | number) {
-    setLineItems(lineItems.map((item, idx) => idx === i ? { ...item, [field]: value } : item));
+  function removePartsItem(i: number) {
+    setCosts({ ...costs, partsItems: costs.partsItems.filter((_, idx) => idx !== i) });
   }
 
-  function computeTotal() {
-    return lineItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.unitPrice || 0)), 0);
+  function updatePartsItem(i: number, field: 'description' | 'amount', value: string) {
+    setCosts({
+      ...costs,
+      partsItems: costs.partsItems.map((p, idx) => idx === i ? { ...p, [field]: value } : p),
+    });
   }
 
   async function handleSave() {
+    // Client-side validation with specific messages
+    if (!form.title.trim()) {
+      toast({ title: 'Title is required', variant: 'destructive' }); return;
+    }
+    if (!form.validUntil) {
+      toast({ title: 'Valid Until date is required', variant: 'destructive' }); return;
+    }
+    if (form.validUntil < form.offerDate) {
+      toast({ title: 'Valid Until must be after the Offer Date', variant: 'destructive' }); return;
+    }
+    if (computeTotal() <= 0) {
+      toast({ title: 'Enter at least one cost item to create an offer', variant: 'destructive' }); return;
+    }
+
     try {
-      const validItems = lineItems.filter((i) => i.description.trim() && i.unitPrice);
+      const items: { description: string; quantity: number; unitPrice: number }[] = [];
+
+      if (costs.designHours && costs.designRate) {
+        items.push({
+          description: `Design Engineering (${costs.designHours}h × ${costs.designRate}€/h)`,
+          quantity: Number(costs.designHours),
+          unitPrice: Number(costs.designRate),
+        });
+      }
+      if (costs.serviceHours && costs.serviceRate) {
+        items.push({
+          description: `Service / Installation (${costs.serviceHours}h × ${costs.serviceRate}€/h)`,
+          quantity: Number(costs.serviceHours),
+          unitPrice: Number(costs.serviceRate),
+        });
+      }
+      if (costs.transportHours && costs.transportRate) {
+        items.push({
+          description: `Transportation (${costs.transportHours}h × ${costs.transportRate}€/h)`,
+          quantity: Number(costs.transportHours),
+          unitPrice: Number(costs.transportRate),
+        });
+      }
+      if (costs.machiningCost) {
+        items.push({ description: 'Machining', quantity: 1, unitPrice: Number(costs.machiningCost) });
+      }
+      if (costs.partsMode === 'lump' && costs.partsLumpSum) {
+        items.push({ description: 'Parts', quantity: 1, unitPrice: Number(costs.partsLumpSum) });
+      } else if (costs.partsMode === 'itemized') {
+        for (const p of costs.partsItems) {
+          if (p.description.trim() && p.amount) {
+            items.push({ description: `Parts — ${p.description.trim()}`, quantity: 1, unitPrice: Number(p.amount) });
+          }
+        }
+      }
+
       const data: Record<string, unknown> = {
         customerId: form.customerId || undefined,
         machineId: form.machineId || undefined,
@@ -149,13 +273,9 @@ export function OffersPage() {
         description: form.description || undefined,
         offerDate: form.offerDate,
         validUntil: form.validUntil,
-        totalAmount: form.totalAmount || computeTotal(),
+        totalAmount: computeTotal(),
         notes: form.notes || undefined,
-        items: validItems.map((i) => ({
-          description: i.description,
-          quantity: Number(i.quantity),
-          unitPrice: Number(i.unitPrice),
-        })),
+        items,
       };
 
       if (editing) {
@@ -167,8 +287,20 @@ export function OffersPage() {
       }
       setOpen(false);
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Error saving offer';
-      toast({ title: msg, variant: 'destructive' });
+      type ApiError = { response?: { data?: { message?: string; errors?: { msg: string; path?: string }[] } } };
+      const data = (e as ApiError)?.response?.data;
+      let msg = 'Error saving offer';
+      if (data?.errors?.length) {
+        const fieldLabels: Record<string, string> = {
+          title: 'Title', validUntil: 'Valid Until', totalAmount: 'Total Amount',
+        };
+        msg = data.errors
+          .map((err) => `${fieldLabels[err.path ?? ''] ?? err.path ?? 'Field'}: ${err.msg}`)
+          .join(' · ');
+      } else if (data?.message) {
+        msg = data.message;
+      }
+      toast({ title: 'Save failed', description: msg, variant: 'destructive' });
     }
   }
 
@@ -199,6 +331,13 @@ export function OffersPage() {
       toast({ title: 'Failed to update payment status', variant: 'destructive' });
     }
   }
+
+  const designTotal = Number(costs.designHours || 0) * Number(costs.designRate || 0);
+  const serviceTotal = Number(costs.serviceHours || 0) * Number(costs.serviceRate || 0);
+  const transportTotal = Number(costs.transportHours || 0) * Number(costs.transportRate || 0);
+  const partsTotal = costs.partsMode === 'lump'
+    ? Number(costs.partsLumpSum || 0)
+    : costs.partsItems.reduce((s, p) => s + Number(p.amount || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -425,6 +564,7 @@ export function OffersPage() {
             <DialogTitle>{editing ? 'Edit Offer' : 'New Offer'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
+
             {/* Basic info */}
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 space-y-2">
@@ -433,10 +573,13 @@ export function OffersPage() {
               </div>
               <div className="space-y-2">
                 <Label>Customer</Label>
-                <Select value={form.customerId} onValueChange={(v) => setForm({ ...form, customerId: v, machineId: '' })}>
+                <Select
+                  value={form.customerId || '__none__'}
+                  onValueChange={(v) => setForm({ ...form, customerId: v === '__none__' ? '' : v, machineId: '' })}
+                >
                   <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— None —</SelectItem>
+                    <SelectItem value="__none__">— None —</SelectItem>
                     {customers.map((c) => (
                       <SelectItem key={c.id} value={c.id}>{c.companyName}</SelectItem>
                     ))}
@@ -445,10 +588,14 @@ export function OffersPage() {
               </div>
               <div className="space-y-2">
                 <Label>Machine</Label>
-                <Select value={form.machineId} onValueChange={(v) => setForm({ ...form, machineId: v })} disabled={!form.customerId}>
+                <Select
+                  value={form.machineId || '__none__'}
+                  onValueChange={(v) => setForm({ ...form, machineId: v === '__none__' ? '' : v })}
+                  disabled={!form.customerId}
+                >
                   <SelectTrigger><SelectValue placeholder={form.customerId ? 'Select machine' : 'Select customer first'} /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— None —</SelectItem>
+                    <SelectItem value="__none__">— None —</SelectItem>
                     {customerMachines.map((m) => (
                       <SelectItem key={m.id} value={m.id}>{m.name}{m.model ? ` (${m.model})` : ''}</SelectItem>
                     ))}
@@ -463,66 +610,154 @@ export function OffersPage() {
                 <Label>Valid Until *</Label>
                 <Input type="date" value={form.validUntil} onChange={(e) => setForm({ ...form, validUntil: e.target.value })} />
               </div>
-              <div className="space-y-2">
-                <Label>Total Amount (€) — leave blank to auto-sum items</Label>
-                <Input type="number" step="0.01" value={form.totalAmount} onChange={(e) => setForm({ ...form, totalAmount: e.target.value })} placeholder="0.00" />
-              </div>
               <div className="col-span-2 space-y-2">
                 <Label>Description</Label>
-                <Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                <Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Brief scope description…" />
               </div>
             </div>
 
-            {/* Line items */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label>Line Items</Label>
-                <Button variant="outline" size="sm" onClick={addLineItem}>
-                  <Plus className="w-3.5 h-3.5 mr-1" />Add row
-                </Button>
+            {/* Cost Breakdown */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Cost Breakdown</Label>
+
+              {/* Design Engineering */}
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Design Engineering</p>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Input type="number" min="0" step="0.5" placeholder="Hours" value={costs.designHours}
+                      onChange={(e) => setCosts({ ...costs, designHours: e.target.value })} className="h-8 text-sm" />
+                  </div>
+                  <span className="text-muted-foreground text-sm">h ×</span>
+                  <div className="flex-1">
+                    <Input type="number" min="0" step="0.01" placeholder="Rate €/h" value={costs.designRate}
+                      onChange={(e) => setCosts({ ...costs, designRate: e.target.value })} className="h-8 text-sm" />
+                  </div>
+                  <span className="text-muted-foreground text-sm">€/h =</span>
+                  <div className="w-24 text-right text-sm font-medium">
+                    {designTotal > 0 ? formatCurrency(designTotal) : <span className="text-muted-foreground">—</span>}
+                  </div>
+                </div>
               </div>
-              <div className="rounded border overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b">
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Description</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground w-20">Qty</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground w-28">Unit Price €</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground w-24">Total</th>
-                      <th className="w-10" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {lineItems.map((item, i) => (
-                      <tr key={i}>
-                        <td className="px-2 py-1.5">
-                          <Input className="h-8 text-sm" value={item.description} onChange={(e) => updateLineItem(i, 'description', e.target.value)} />
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <Input className="h-8 text-sm" type="number" min="1" value={item.quantity} onChange={(e) => updateLineItem(i, 'quantity', Number(e.target.value))} />
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <Input className="h-8 text-sm" type="number" step="0.01" value={item.unitPrice} onChange={(e) => updateLineItem(i, 'unitPrice', e.target.value)} />
-                        </td>
-                        <td className="px-3 py-1.5 text-right text-muted-foreground">
-                          {item.unitPrice ? formatCurrency(Number(item.quantity) * Number(item.unitPrice)) : '—'}
-                        </td>
-                        <td className="px-1 py-1.5">
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => removeLineItem(i)}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </td>
-                      </tr>
+
+              {/* Service / Installation */}
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="text-xs font-semibold text-green-700 uppercase tracking-wide">Service / Installation</p>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Input type="number" min="0" step="0.5" placeholder="Hours" value={costs.serviceHours}
+                      onChange={(e) => setCosts({ ...costs, serviceHours: e.target.value })} className="h-8 text-sm" />
+                  </div>
+                  <span className="text-muted-foreground text-sm">h ×</span>
+                  <div className="flex-1">
+                    <Input type="number" min="0" step="0.01" placeholder="Rate €/h" value={costs.serviceRate}
+                      onChange={(e) => setCosts({ ...costs, serviceRate: e.target.value })} className="h-8 text-sm" />
+                  </div>
+                  <span className="text-muted-foreground text-sm">€/h =</span>
+                  <div className="w-24 text-right text-sm font-medium">
+                    {serviceTotal > 0 ? formatCurrency(serviceTotal) : <span className="text-muted-foreground">—</span>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Transportation */}
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="text-xs font-semibold text-orange-700 uppercase tracking-wide">Transportation</p>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Input type="number" min="0" step="0.5" placeholder="Hours" value={costs.transportHours}
+                      onChange={(e) => setCosts({ ...costs, transportHours: e.target.value })} className="h-8 text-sm" />
+                  </div>
+                  <span className="text-muted-foreground text-sm">h ×</span>
+                  <div className="flex-1">
+                    <Input type="number" min="0" step="0.01" placeholder="Rate €/h" value={costs.transportRate}
+                      onChange={(e) => setCosts({ ...costs, transportRate: e.target.value })} className="h-8 text-sm" />
+                  </div>
+                  <span className="text-muted-foreground text-sm">€/h =</span>
+                  <div className="w-24 text-right text-sm font-medium">
+                    {transportTotal > 0 ? formatCurrency(transportTotal) : <span className="text-muted-foreground">—</span>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Machining */}
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide">Machining <span className="normal-case font-normal text-muted-foreground">(optional)</span></p>
+                <div className="flex items-center gap-2">
+                  <Input type="number" min="0" step="0.01" placeholder="Cost €" value={costs.machiningCost}
+                    onChange={(e) => setCosts({ ...costs, machiningCost: e.target.value })} className="h-8 text-sm w-48" />
+                  {Number(costs.machiningCost) > 0 && (
+                    <span className="text-sm font-medium">{formatCurrency(Number(costs.machiningCost))}</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Parts */}
+              <div className="rounded-lg border p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-700 uppercase tracking-wide">Parts</p>
+                  <div className="flex rounded-md border overflow-hidden text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setCosts({ ...costs, partsMode: 'lump' })}
+                      className={`px-2.5 py-1 transition-colors ${costs.partsMode === 'lump' ? 'bg-slate-900 text-white' : 'bg-white text-muted-foreground hover:bg-gray-50'}`}
+                    >
+                      Lump sum
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCosts({ ...costs, partsMode: 'itemized' })}
+                      className={`px-2.5 py-1 border-l transition-colors ${costs.partsMode === 'itemized' ? 'bg-slate-900 text-white' : 'bg-white text-muted-foreground hover:bg-gray-50'}`}
+                    >
+                      Itemized
+                    </button>
+                  </div>
+                </div>
+                {costs.partsMode === 'lump' ? (
+                  <div className="flex items-center gap-2">
+                    <Input type="number" min="0" step="0.01" placeholder="Total parts cost €" value={costs.partsLumpSum}
+                      onChange={(e) => setCosts({ ...costs, partsLumpSum: e.target.value })} className="h-8 text-sm w-48" />
+                    {Number(costs.partsLumpSum) > 0 && (
+                      <span className="text-sm font-medium">{formatCurrency(Number(costs.partsLumpSum))}</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {costs.partsItems.map((p, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <Input className="h-8 text-sm flex-1" placeholder="Part description" value={p.description}
+                          onChange={(e) => updatePartsItem(i, 'description', e.target.value)} />
+                        <Input className="h-8 text-sm w-28" type="number" step="0.01" min="0" placeholder="€" value={p.amount}
+                          onChange={(e) => updatePartsItem(i, 'amount', e.target.value)} />
+                        <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0 text-destructive hover:text-destructive"
+                          onClick={() => removePartsItem(i)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-gray-50 border-t">
-                      <td colSpan={3} className="px-3 py-2 text-right text-sm font-medium">Auto-sum:</td>
-                      <td className="px-3 py-2 text-right font-bold text-sm">{formatCurrency(computeTotal())}</td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
+                    <Button variant="outline" size="sm" onClick={addPartsItem} className="text-xs h-7">
+                      <Plus className="w-3 h-3 mr-1" /> Add part
+                    </Button>
+                    {partsTotal > 0 && (
+                      <p className="text-sm font-medium text-right pt-1">Parts total: {formatCurrency(partsTotal)}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Grand Total */}
+            <div className="flex items-center justify-between py-3 px-4 bg-slate-50 rounded-lg border border-slate-200">
+              <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+                {designTotal > 0 && <span>Design: {formatCurrency(designTotal)}</span>}
+                {serviceTotal > 0 && <span>Service: {formatCurrency(serviceTotal)}</span>}
+                {transportTotal > 0 && <span>Transport: {formatCurrency(transportTotal)}</span>}
+                {Number(costs.machiningCost) > 0 && <span>Machining: {formatCurrency(Number(costs.machiningCost))}</span>}
+                {partsTotal > 0 && <span>Parts: {formatCurrency(partsTotal)}</span>}
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground mb-0.5">Grand Total</p>
+                <p className="text-xl font-bold">{formatCurrency(computeTotal())}</p>
               </div>
             </div>
 
@@ -603,12 +838,12 @@ export function OffersPage() {
 
               {selected.items && selected.items.length > 0 && (
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Line Items</p>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Cost Breakdown</p>
                   <div className="rounded border overflow-hidden">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50 border-b">
-                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Description</th>
+                          <th className="px-3 py-2 text-left font-medium text-muted-foreground">Item</th>
                           <th className="px-3 py-2 text-right font-medium text-muted-foreground">Qty</th>
                           <th className="px-3 py-2 text-right font-medium text-muted-foreground">Unit €</th>
                           <th className="px-3 py-2 text-right font-medium text-muted-foreground">Total</th>
@@ -624,6 +859,12 @@ export function OffersPage() {
                           </tr>
                         ))}
                       </tbody>
+                      <tfoot>
+                        <tr className="bg-gray-50 border-t">
+                          <td colSpan={3} className="px-3 py-2 text-right text-sm font-medium">Total</td>
+                          <td className="px-3 py-2 text-right font-bold">{formatCurrency(selected.totalAmount)}</td>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
                 </div>
@@ -639,6 +880,26 @@ export function OffersPage() {
               {selected.creator && (
                 <p className="text-xs text-muted-foreground">Created by {selected.creator.name}</p>
               )}
+
+              {/* Drive / download row */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
+                <Button variant="outline" size="sm" onClick={() => downloadFile(selected.id, selected.title, 'pdf')}>
+                  <FileDown className="w-3.5 h-3.5 mr-1.5" /> PDF
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => downloadFile(selected.id, selected.title, 'docx')}>
+                  <FileText className="w-3.5 h-3.5 mr-1.5" /> Word
+                </Button>
+                {selected.drivePdfUrl && (
+                  <a
+                    href={selected.drivePdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:underline ml-auto"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> View on Drive
+                  </a>
+                )}
+              </div>
             </div>
             <DialogFooter>
               {canEdit && (

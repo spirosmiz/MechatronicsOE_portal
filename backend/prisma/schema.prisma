@@ -157,6 +157,9 @@ model Offer {
   createdBy     String?  @map("created_by")
   createdAt     DateTime @default(now()) @map("created_at")
 
+  drivePdfId  String?  @map("drive_pdf_id")
+  drivePdfUrl String?  @map("drive_pdf_url")
+
   customer Customer?   @relation(fields: [customerId], references: [id])
   machine  Machine?    @relation(fields: [machineId], references: [id])
   creator  User?       @relation("OfferCreator", fields: [createdBy], references: [id])

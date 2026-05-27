@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Building2, Edit, Trash2, Phone, Mail, MapPin, Images, FolderOpen, FolderPlus } from 'lucide-react';
+import { Plus, Search, Building2, Edit, Trash2, Phone, Mail, MapPin, Images, FolderOpen, FolderPlus, LayoutGrid, List } from 'lucide-react';
 import { MediaGalleryDialog } from '@/components/ui/MediaGallery';
 import { useCustomers, useCreateCustomer, useUpdateCustomer, useDeleteCustomer, useSetupCustomerDrive } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
@@ -26,6 +26,7 @@ export function CustomersPage() {
   const canEdit = user?.role === 'admin' || user?.role === 'project_manager';
 
   const [search, setSearch] = useState('');
+  const [view, setView] = useState<'grid' | 'list'>('grid');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [form, setForm] = useState<Partial<Customer>>(EMPTY);
@@ -74,12 +75,30 @@ export function CustomersPage() {
           <h1 className="text-2xl font-bold">Customers</h1>
           <p className="text-muted-foreground">{customers.length} total customers</p>
         </div>
-        {canEdit && (
-          <Button onClick={openCreate}>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Customer
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-md border overflow-hidden">
+            <button
+              onClick={() => setView('grid')}
+              className={`px-2.5 py-1.5 transition-colors ${view === 'grid' ? 'bg-slate-900 text-white' : 'bg-white text-muted-foreground hover:bg-gray-50'}`}
+              title="Grid view"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setView('list')}
+              className={`px-2.5 py-1.5 border-l transition-colors ${view === 'list' ? 'bg-slate-900 text-white' : 'bg-white text-muted-foreground hover:bg-gray-50'}`}
+              title="List view"
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
+          {canEdit && (
+            <Button onClick={openCreate}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Customer
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="relative">
@@ -96,7 +115,7 @@ export function CustomersPage() {
           <Building2 className="w-12 h-12 mx-auto mb-3 opacity-30" />
           <p>No customers found</p>
         </div>
-      ) : (
+      ) : view === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((c) => (
             <Card key={c.id} className="hover:shadow-md transition-shadow">
@@ -147,9 +166,13 @@ export function CustomersPage() {
                   </div>
                 </div>
                 <div className="mt-4 pt-3 border-t space-y-2">
-                  <div className="flex gap-4 text-xs text-muted-foreground">
-                    <span>{c._count?.machines ?? 0} machines</span>
-                    <span>{c._count?.projects ?? 0} projects</span>
+                  <div className="flex gap-4 text-xs">
+                    <Link to={`/customers/${c.id}`} state={{ tab: 'machines' }} className="text-muted-foreground hover:text-blue-600 transition-colors">
+                      {c._count?.machines ?? 0} machines
+                    </Link>
+                    <Link to={`/customers/${c.id}`} state={{ tab: 'projects' }} className="text-muted-foreground hover:text-blue-600 transition-colors">
+                      {c._count?.projects ?? 0} projects
+                    </Link>
                   </div>
                   {c.driveFolderId ? (
                     <div className="flex flex-wrap gap-1.5">
@@ -193,6 +216,77 @@ export function CustomersPage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      ) : (
+        <div className="rounded-lg border overflow-hidden bg-white">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-gray-50 text-left">
+                <th className="px-4 py-3 font-medium text-muted-foreground">Company</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Contact</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Email / Phone</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Address</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Machines</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Projects</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {filtered.map((c) => (
+                <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3">
+                    <Link to={`/customers/${c.id}`} className="font-medium hover:text-blue-600 transition-colors">
+                      {c.companyName}
+                    </Link>
+                    <p className="text-xs text-muted-foreground">VAT: {c.vatNumber}</p>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{c.contactPerson ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    {c.email && (
+                      <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+                        <Mail className="w-3 h-3 flex-shrink-0" /><span className="truncate max-w-[160px]">{c.email}</span>
+                      </div>
+                    )}
+                    {c.phone && (
+                      <div className="flex items-center gap-1.5 text-muted-foreground text-xs mt-0.5">
+                        <Phone className="w-3 h-3 flex-shrink-0" /><span>{c.phone}</span>
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs max-w-[180px]">
+                    <span className="line-clamp-2">{c.address}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Link to={`/customers/${c.id}`} state={{ tab: 'machines' }} className="text-sm font-medium hover:text-blue-600 transition-colors">
+                      {c._count?.machines ?? 0}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Link to={`/customers/${c.id}`} state={{ tab: 'projects' }} className="text-sm font-medium hover:text-blue-600 transition-colors">
+                      {c._count?.projects ?? 0}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-blue-600" title="Media" onClick={() => setMediaTarget({ id: c.id, name: c.companyName })}>
+                        <Images className="w-3.5 h-3.5" />
+                      </Button>
+                      {canEdit && (
+                        <>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(c)}>
+                            <Edit className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(c.id, c.companyName)}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

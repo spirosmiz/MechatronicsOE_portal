@@ -105,6 +105,8 @@ export const offersApi = {
     api.put(`/offers/${offerId}/items/${itemId}`, data),
   removeItem: (offerId: string, itemId: string) => api.delete(`/offers/${offerId}/items/${itemId}`),
   delete: (id: string) => api.delete(`/offers/${id}`),
+  downloadPdf: (id: string) => api.get(`/offers/${id}/pdf`, { responseType: 'blob' }),
+  downloadDocx: (id: string) => api.get(`/offers/${id}/docx`, { responseType: 'blob' }),
 };
 
 // Media

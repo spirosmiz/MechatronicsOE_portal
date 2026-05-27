@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Cpu, Edit, Trash2, Images } from 'lucide-react';
+import { Plus, Search, Cpu, Edit, Trash2, Images, LayoutGrid, List } from 'lucide-react';
 import { MediaGalleryDialog } from '@/components/ui/MediaGallery';
 import { useMachines, useCreateMachine, useUpdateMachine, useDeleteMachine, useCustomers } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
@@ -27,6 +27,7 @@ export function MachinesPage() {
   const canEdit = user?.role === 'admin' || user?.role === 'project_manager';
 
   const [search, setSearch] = useState('');
+  const [view, setView] = useState<'grid' | 'list'>('grid');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Machine | null>(null);
   const [form, setForm] = useState<typeof EMPTY & { customerId: string }>(EMPTY);
@@ -101,12 +102,30 @@ export function MachinesPage() {
           <h1 className="text-2xl font-bold">Machines</h1>
           <p className="text-muted-foreground">{machines.length} registered machines</p>
         </div>
-        {canEdit && (
-          <Button onClick={openCreate}>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Machine
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-md border overflow-hidden">
+            <button
+              onClick={() => setView('grid')}
+              className={`px-2.5 py-1.5 transition-colors ${view === 'grid' ? 'bg-slate-900 text-white' : 'bg-white text-muted-foreground hover:bg-gray-50'}`}
+              title="Grid view"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setView('list')}
+              className={`px-2.5 py-1.5 border-l transition-colors ${view === 'list' ? 'bg-slate-900 text-white' : 'bg-white text-muted-foreground hover:bg-gray-50'}`}
+              title="List view"
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
+          {canEdit && (
+            <Button onClick={openCreate}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Machine
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="relative">
@@ -123,7 +142,7 @@ export function MachinesPage() {
           <Cpu className="w-12 h-12 mx-auto mb-3 opacity-30" />
           <p>No machines found</p>
         </div>
-      ) : (
+      ) : view === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((m) => (
             <Card key={m.id} className="hover:shadow-md transition-shadow">
@@ -182,6 +201,68 @@ export function MachinesPage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      ) : (
+        <div className="rounded-lg border overflow-hidden bg-white">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-gray-50 text-left">
+                <th className="px-4 py-3 font-medium text-muted-foreground">Machine</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Manufacturer</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Serial Number</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Customer</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Technical Specs</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {filtered.map((m) => (
+                <tr key={m.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3">
+                    <p className="font-medium">{m.name}</p>
+                    {m.model && <p className="text-xs text-muted-foreground">{m.model}</p>}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{m.manufacturer ?? '—'}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{m.serialNumber ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    {m.customer ? (
+                      <Link to={`/customers/${m.customer.id}`} className="text-blue-600 hover:underline text-sm">
+                        {m.customer.companyName}
+                      </Link>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {m.technicalSpecs ? (
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                        {Object.entries(m.technicalSpecs as Record<string, unknown>).slice(0, 3).map(([k, v]) => (
+                          <span key={k} className="text-xs text-muted-foreground">
+                            <span className="capitalize">{k.replace(/_/g, ' ')}</span>: <span className="text-foreground font-medium">{String(v)}</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-blue-600" title="Media" onClick={() => setMediaTarget({ id: m.id, name: m.name })}>
+                        <Images className="w-3.5 h-3.5" />
+                      </Button>
+                      {canEdit && (
+                        <>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(m)}>
+                            <Edit className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(m.id, m.name)}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

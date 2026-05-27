@@ -147,6 +147,8 @@ export interface Offer {
   creator?: { id: string; name: string };
   createdAt: string;
   items?: OfferItem[];
+  drivePdfId?: string;
+  drivePdfUrl?: string;
   _count?: { items: number };
 }
 

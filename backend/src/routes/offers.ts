@@ -4,6 +4,8 @@ import { UserRole, OfferStatus, PaymentStatus } from '../lib/enums';
 import prisma from '../lib/prisma';
 import { authenticate, requireRole } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
+import { isDriveConfigured, createDriveFolder, uploadToDrive } from '../lib/googleDrive';
+import { generateOfferPdf, generateOfferDocx, OfferDocumentData } from '../lib/offerDocument';
 
 const router = Router();
 router.use(authenticate);
@@ -14,6 +16,56 @@ async function autoExpire() {
     where: { status: OfferStatus.sent, validUntil: { lt: new Date() } },
     data: { status: OfferStatus.expired },
   });
+}
+
+const FULL_INCLUDE = {
+  customer: { select: { id: true, companyName: true, email: true, contactPerson: true, phone: true, address: true, driveFolderId: true, driveOffersFolderId: true } },
+  machine:  { select: { id: true, name: true, model: true } },
+  creator:  { select: { id: true, name: true } },
+  items:    { orderBy: { description: 'asc' } as const },
+};
+
+// Upload PDF to customer's Drive Offers folder; returns webViewLink or null
+async function uploadOfferPdfToDrive(
+  offerId: string,
+  offer: OfferDocumentData,
+  customerId: string | null | undefined,
+): Promise<string | null> {
+  if (!customerId || !isDriveConfigured()) return null;
+  try {
+    const customer = await prisma.customer.findUnique({
+      where: { id: customerId },
+      select: { driveFolderId: true, driveOffersFolderId: true },
+    });
+    if (!customer) return null;
+
+    let offersFolderId = customer.driveOffersFolderId;
+
+    // Auto-create Offers subfolder if parent exists but Offers doesn't
+    if (!offersFolderId && customer.driveFolderId) {
+      offersFolderId = await createDriveFolder('Offers', customer.driveFolderId);
+      await prisma.customer.update({
+        where: { id: customerId },
+        data: { driveOffersFolderId: offersFolderId },
+      });
+    }
+    if (!offersFolderId) return null;
+
+    const pdfBuffer = await generateOfferPdf(offer);
+    const safeTitle = offer.title.replace(/[^\w\s\-]/g, '').trim().substring(0, 60);
+    const fileName = `${safeTitle} — Offer.pdf`;
+
+    const driveFile = await uploadToDrive(pdfBuffer, 'application/pdf', fileName, offersFolderId);
+
+    await prisma.offer.update({
+      where: { id: offerId },
+      data: { drivePdfId: driveFile.fileId, drivePdfUrl: driveFile.webViewLink },
+    });
+    return driveFile.webViewLink;
+  } catch (err) {
+    console.error('[Drive] Failed to upload offer PDF:', err);
+    return null;
+  }
 }
 
 // GET /api/offers
@@ -49,17 +101,52 @@ router.get('/stats', async (_req, res: Response) => {
   });
 });
 
+// GET /api/offers/:id/pdf
+router.get('/:id/pdf', async (req, res: Response): Promise<void> => {
+  const offer = await prisma.offer.findUnique({
+    where: { id: req.params.id },
+    include: FULL_INCLUDE,
+  });
+  if (!offer) { res.status(404).json({ message: 'Offer not found' }); return; }
+
+  try {
+    const buffer = await generateOfferPdf(offer as unknown as OfferDocumentData);
+    const safeTitle = offer.title.replace(/[^\w\s\-]/g, '').trim().substring(0, 60);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeTitle} - Offer.pdf"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('[PDF] Generation failed:', err);
+    res.status(500).json({ message: 'Failed to generate PDF' });
+  }
+});
+
+// GET /api/offers/:id/docx
+router.get('/:id/docx', async (req, res: Response): Promise<void> => {
+  const offer = await prisma.offer.findUnique({
+    where: { id: req.params.id },
+    include: FULL_INCLUDE,
+  });
+  if (!offer) { res.status(404).json({ message: 'Offer not found' }); return; }
+
+  try {
+    const buffer = await generateOfferDocx(offer as unknown as OfferDocumentData);
+    const safeTitle = offer.title.replace(/[^\w\s\-]/g, '').trim().substring(0, 60);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeTitle} - Offer.docx"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('[DOCX] Generation failed:', err);
+    res.status(500).json({ message: 'Failed to generate DOCX' });
+  }
+});
+
 // GET /api/offers/:id
 router.get('/:id', async (req, res: Response) => {
   await autoExpire();
   const offer = await prisma.offer.findUnique({
     where: { id: req.params.id },
-    include: {
-      customer: { select: { id: true, companyName: true, email: true, contactPerson: true } },
-      machine:  { select: { id: true, name: true, model: true } },
-      creator:  { select: { id: true, name: true } },
-      items:    { orderBy: { description: 'asc' } },
-    },
+    include: FULL_INCLUDE,
   });
   if (!offer) { res.status(404).json({ message: 'Offer not found' }); return; }
   res.json(offer);
@@ -96,26 +183,26 @@ router.post(
           items: {
             create: items.map((item: { description: string; quantity: number; unitPrice: number }) => ({
               description: item.description,
-              quantity: item.quantity ?? 1,
-              unitPrice: item.unitPrice,
+              quantity:    item.quantity ?? 1,
+              unitPrice:   item.unitPrice,
             })),
           },
         }),
       },
-      include: {
-        customer: { select: { id: true, companyName: true } },
-        machine:  { select: { id: true, name: true, model: true } },
-        creator:  { select: { id: true, name: true } },
-        items: true,
-      },
+      include: FULL_INCLUDE,
     });
+
+    // Fire-and-forget Drive upload (errors are caught inside)
+    uploadOfferPdfToDrive(offer.id, offer as unknown as OfferDocumentData, customerId);
+
     res.status(201).json(offer);
   }
 );
 
 // PUT /api/offers/:id
 router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async (req: AuthenticatedRequest, res: Response) => {
-  const { customerId, machineId, title, description, offerDate, validUntil, totalAmount, notes } = req.body;
+  const { customerId, machineId, title, description, offerDate, validUntil, totalAmount, notes, items } = req.body;
+
   const offer = await prisma.offer.update({
     where: { id: req.params.id },
     data: {
@@ -127,13 +214,31 @@ router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async 
       validUntil: validUntil ? new Date(validUntil) : undefined,
       totalAmount,
       notes,
+      // Reset Drive PDF so a fresh one is generated
+      drivePdfId:  null,
+      drivePdfUrl: null,
     },
-    include: {
-      customer: { select: { id: true, companyName: true } },
-      machine:  { select: { id: true, name: true, model: true } },
-      items: true,
-    },
+    include: FULL_INCLUDE,
   });
+
+  // Replace items
+  if (Array.isArray(items)) {
+    await prisma.offerItem.deleteMany({ where: { offerId: req.params.id } });
+    if (items.length > 0) {
+      await prisma.offerItem.createMany({
+        data: items.map((item: { description: string; quantity: number; unitPrice: number }) => ({
+          offerId:     req.params.id,
+          description: item.description,
+          quantity:    item.quantity ?? 1,
+          unitPrice:   item.unitPrice,
+        })),
+      });
+    }
+  }
+
+  // Re-generate and upload PDF to Drive
+  uploadOfferPdfToDrive(offer.id, offer as unknown as OfferDocumentData, customerId);
+
   res.json(offer);
 });
 
