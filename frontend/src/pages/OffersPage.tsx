@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import {
   Plus, Search, FileSignature, Edit, Trash2, ChevronDown,
-  CalendarClock, AlertTriangle, CheckCircle2, Clock,
+  CalendarClock, AlertTriangle, CheckCircle2, Clock, Cpu,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import {
   useOffers, useCreateOffer, useUpdateOffer, useDeleteOffer,
-  useUpdateOfferStatus, useUpdateOfferPayment, useCustomers,
+  useUpdateOfferStatus, useUpdateOfferPayment, useCustomers, useMachines,
 } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
@@ -31,6 +32,7 @@ interface LineItem { description: string; quantity: number; unitPrice: string }
 
 const EMPTY_FORM = {
   customerId: '',
+  machineId: '',
   title: '',
   description: '',
   offerDate: new Date().toISOString().split('T')[0],
@@ -51,6 +53,7 @@ function daysUntil(dateStr: string) {
 export function OffersPage() {
   const { data: offers = [], isLoading } = useOffers();
   const { data: customers = [] } = useCustomers();
+  const { data: allMachines = [] } = useMachines();
   const createMut = useCreateOffer();
   const updateMut = useUpdateOffer();
   const deleteMut = useDeleteOffer();
@@ -87,6 +90,8 @@ export function OffersPage() {
     .filter((o) => o.status === 'accepted')
     .reduce((s, o) => s + Number(o.totalAmount), 0);
 
+  const customerMachines = allMachines.filter((m) => m.customerId === form.customerId);
+
   function openCreate() {
     setEditing(null);
     setForm({ ...EMPTY_FORM, offerDate: new Date().toISOString().split('T')[0] });
@@ -98,6 +103,7 @@ export function OffersPage() {
     setEditing(o);
     setForm({
       customerId: o.customerId ?? '',
+      machineId: o.machineId ?? '',
       title: o.title,
       description: o.description ?? '',
       offerDate: o.offerDate.split('T')[0],
@@ -138,6 +144,7 @@ export function OffersPage() {
       const validItems = lineItems.filter((i) => i.description.trim() && i.unitPrice);
       const data: Record<string, unknown> = {
         customerId: form.customerId || undefined,
+        machineId: form.machineId || undefined,
         title: form.title,
         description: form.description || undefined,
         offerDate: form.offerDate,
@@ -322,7 +329,14 @@ export function OffersPage() {
                         {o.title}
                       </button>
                       {o.customer && (
-                        <p className="text-xs text-muted-foreground">{o.customer.companyName}</p>
+                        <Link to={`/customers/${o.customer.id}`} className="text-xs text-muted-foreground hover:text-blue-600 block">
+                          {o.customer.companyName}
+                        </Link>
+                      )}
+                      {o.machine && (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <Cpu className="w-3 h-3" />{o.machine.name}
+                        </p>
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(o.offerDate)}</td>
@@ -419,12 +433,24 @@ export function OffersPage() {
               </div>
               <div className="space-y-2">
                 <Label>Customer</Label>
-                <Select value={form.customerId} onValueChange={(v) => setForm({ ...form, customerId: v })}>
+                <Select value={form.customerId} onValueChange={(v) => setForm({ ...form, customerId: v, machineId: '' })}>
                   <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">— None —</SelectItem>
                     {customers.map((c) => (
                       <SelectItem key={c.id} value={c.id}>{c.companyName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Machine</Label>
+                <Select value={form.machineId} onValueChange={(v) => setForm({ ...form, machineId: v })} disabled={!form.customerId}>
+                  <SelectTrigger><SelectValue placeholder={form.customerId ? 'Select machine' : 'Select customer first'} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">— None —</SelectItem>
+                    {customerMachines.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>{m.name}{m.model ? ` (${m.model})` : ''}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -540,13 +566,24 @@ export function OffersPage() {
                 {selected.customer && (
                   <>
                     <p className="text-muted-foreground">Customer</p>
-                    <p className="font-medium">{selected.customer.companyName}</p>
+                    <Link to={`/customers/${selected.customer.id}`} className="font-medium hover:text-blue-600" onClick={() => setDetailOpen(false)}>
+                      {selected.customer.companyName}
+                    </Link>
                   </>
                 )}
                 {selected.customer?.contactPerson && (
                   <>
                     <p className="text-muted-foreground">Contact</p>
                     <p>{selected.customer.contactPerson}</p>
+                  </>
+                )}
+                {selected.machine && (
+                  <>
+                    <p className="text-muted-foreground">Machine</p>
+                    <p className="font-medium flex items-center gap-1">
+                      <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
+                      {selected.machine.name}{selected.machine.model ? ` — ${selected.machine.model}` : ''}
+                    </p>
                   </>
                 )}
                 <p className="text-muted-foreground">Offer Date</p>

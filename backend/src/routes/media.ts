@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import multer from 'multer';
 import { UserRole } from '../lib/enums';
-import { uploadToDrive, deleteFromDrive, isDriveConfigured, createCustomerFolders } from '../lib/googleDrive';
+import { uploadToDrive, deleteFromDrive, isDriveConfigured, createCustomerFolders, createDriveFolder, createInventoryItemFolders } from '../lib/googleDrive';
 import prisma from '../lib/prisma';
 import { authenticate, requireRole } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
@@ -18,27 +18,33 @@ const upload = multer({
   },
 });
 
+async function getOrCreateCustomersRoot(): Promise<string> {
+  let rootId = (await prisma.driveConfig.findUnique({ where: { key: 'customers_root' } }))?.value;
+  if (!rootId) {
+    rootId = await createDriveFolder('Customers', process.env.GOOGLE_DRIVE_FOLDER_ID!);
+    await prisma.driveConfig.upsert({ where: { key: 'customers_root' }, update: { value: rootId }, create: { key: 'customers_root', value: rootId } });
+  }
+  return rootId;
+}
+
 // Resolve which Drive folder to upload into, auto-creating folders if needed
-async function resolveFolderId(entityType: string, entityId: string, subfolder: string): Promise<string | undefined> {
+async function resolveFolderId(entityType: string, entityId: string, subfolder: string, mimeType?: string): Promise<string | undefined> {
   if (entityType === 'customer') {
     let customer = await prisma.customer.findUnique({ where: { id: entityId } });
     if (!customer) return undefined;
 
-    if (!customer.driveMediaFolderId && isDriveConfigured()) {
-      try {
-        const folders = await createCustomerFolders(customer.companyName);
-        customer = await prisma.customer.update({
-          where: { id: entityId },
-          data: {
-            driveFolderId: folders.rootId,
-            driveMediaFolderId: folders.mediaId,
-            driveOffersFolderId: folders.offersId,
-            driveContractsFolderId: folders.contractsId,
-          },
-        });
-      } catch (err) {
-        console.error('Auto Drive folder setup failed for customer:', err);
-      }
+    if (!customer.driveFolderId && isDriveConfigured()) {
+      const customersRootId = await getOrCreateCustomersRoot();
+      const folders = await createCustomerFolders(customer.companyName, customersRootId);
+      customer = await prisma.customer.update({
+        where: { id: entityId },
+        data: {
+          driveFolderId: folders.rootId,
+          driveMediaFolderId: folders.mediaId,
+          driveOffersFolderId: folders.offersId,
+          driveContractsFolderId: folders.contractsId,
+        },
+      });
     }
 
     if (subfolder === 'offers')    return customer.driveOffersFolderId    ?? undefined;
@@ -53,29 +59,53 @@ async function resolveFolderId(entityType: string, entityId: string, subfolder: 
     let customer = await prisma.customer.findUnique({ where: { id: machine.customerId } });
     if (!customer) return undefined;
 
-    if (!customer.driveMediaFolderId && isDriveConfigured()) {
-      try {
-        const folders = await createCustomerFolders(customer.companyName);
-        customer = await prisma.customer.update({
-          where: { id: machine.customerId },
-          data: {
-            driveFolderId: folders.rootId,
-            driveMediaFolderId: folders.mediaId,
-            driveOffersFolderId: folders.offersId,
-            driveContractsFolderId: folders.contractsId,
-          },
-        });
-      } catch (err) {
-        console.error('Auto Drive folder setup failed for machine customer:', err);
-      }
+    if (!customer.driveFolderId && isDriveConfigured()) {
+      const customersRootId = await getOrCreateCustomersRoot();
+      const folders = await createCustomerFolders(customer.companyName, customersRootId);
+      customer = await prisma.customer.update({
+        where: { id: machine.customerId },
+        data: {
+          driveFolderId: folders.rootId,
+          driveMediaFolderId: folders.mediaId,
+          driveOffersFolderId: folders.offersId,
+          driveContractsFolderId: folders.contractsId,
+        },
+      });
     }
 
     return customer.driveMediaFolderId ?? undefined;
   }
 
   if (entityType === 'inventory') {
-    const item = await prisma.inventory.findUnique({ where: { id: entityId } });
-    return item?.driveFolderId ?? undefined;
+    let item = await prisma.inventory.findUnique({ where: { id: entityId } });
+    if (!item) return undefined;
+
+    if (!item.driveFolderId && isDriveConfigured()) {
+      const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID!;
+      let invRootId = (await prisma.driveConfig.findUnique({ where: { key: 'inventory_root' } }))?.value;
+      if (!invRootId) {
+        invRootId = await createDriveFolder('Inventory', rootFolderId);
+        await prisma.driveConfig.upsert({ where: { key: 'inventory_root' }, update: { value: invRootId }, create: { key: 'inventory_root', value: invRootId } });
+      }
+      const effectiveBrand = item.brand?.trim() || 'General';
+      const brandKey = `inventory_brand_${effectiveBrand.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+      let brandFolderId = (await prisma.driveConfig.findUnique({ where: { key: brandKey } }))?.value;
+      if (!brandFolderId) {
+        brandFolderId = await createDriveFolder(effectiveBrand, invRootId);
+        await prisma.driveConfig.upsert({ where: { key: brandKey }, update: { value: brandFolderId }, create: { key: brandKey, value: brandFolderId } });
+      }
+      const folders = await createInventoryItemFolders(item.partNumber, item.name, brandFolderId);
+      item = await prisma.inventory.update({
+        where: { id: entityId },
+        data: { driveFolderId: folders.rootId, drivePhotosFolderId: folders.photosId, driveDatasheetsFolderId: folders.datasheetsId },
+      });
+    }
+
+    const isDatasheet = subfolder === 'datasheets' || mimeType === 'application/pdf';
+    const isPhoto = subfolder === 'photos' || mimeType?.startsWith('image/');
+    if (isDatasheet) return item.driveDatasheetsFolderId ?? item.driveFolderId ?? undefined;
+    if (isPhoto)    return item.drivePhotosFolderId    ?? item.driveFolderId ?? undefined;
+    return item.driveFolderId ?? undefined;
   }
 
   return undefined;
@@ -115,26 +145,35 @@ router.post(
       return;
     }
 
-    const targetFolderId = await resolveFolderId(entityType, entityId, subfolder);
+    try {
+      const targetFolderId = await resolveFolderId(entityType, entityId, subfolder, req.file.mimetype);
+      if (!targetFolderId) {
+        res.status(404).json({ message: `Entity ${entityType}:${entityId} not found or has no Drive folder` });
+        return;
+      }
 
-    const safeFileName = `${entityType}-${entityId}-${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
-    const driveFile = await uploadToDrive(req.file.buffer, req.file.mimetype, safeFileName, targetFolderId);
+      const safeFileName = `${entityType}-${entityId}-${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
+      const driveFile = await uploadToDrive(req.file.buffer, req.file.mimetype, safeFileName, targetFolderId);
 
-    const media = await prisma.mediaFile.create({
-      data: {
-        entityType,
-        entityId,
-        driveFileId: driveFile.fileId,
-        name: req.file.originalname,
-        mimeType: req.file.mimetype,
-        driveUrl: driveFile.webViewLink,
-        thumbnailUrl: driveFile.thumbnailUrl,
-        uploadedBy: req.user?.userId,
-      },
-      include: { uploader: { select: { id: true, name: true } } },
-    });
+      const media = await prisma.mediaFile.create({
+        data: {
+          entityType,
+          entityId,
+          driveFileId: driveFile.fileId,
+          name: req.file.originalname,
+          mimeType: req.file.mimetype,
+          driveUrl: driveFile.webViewLink,
+          thumbnailUrl: driveFile.thumbnailUrl,
+          uploadedBy: req.user?.userId,
+        },
+        include: { uploader: { select: { id: true, name: true } } },
+      });
 
-    res.status(201).json(media);
+      res.status(201).json(media);
+    } catch (err: any) {
+      console.error('Media upload failed:', err);
+      res.status(500).json({ message: err?.message ?? 'Upload failed' });
+    }
   }
 );
 

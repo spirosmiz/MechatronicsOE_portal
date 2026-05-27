@@ -17,13 +17,16 @@ async function autoExpire() {
 }
 
 // GET /api/offers
-router.get('/', async (_req, res: Response) => {
+router.get('/', async (req, res: Response) => {
   await autoExpire();
+  const { customerId } = req.query as { customerId?: string };
   const offers = await prisma.offer.findMany({
+    where: customerId ? { customerId } : undefined,
     include: {
       customer: { select: { id: true, companyName: true } },
-      creator: { select: { id: true, name: true } },
-      _count: { select: { items: true } },
+      machine:  { select: { id: true, name: true, model: true } },
+      creator:  { select: { id: true, name: true } },
+      _count:   { select: { items: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -53,8 +56,9 @@ router.get('/:id', async (req, res: Response) => {
     where: { id: req.params.id },
     include: {
       customer: { select: { id: true, companyName: true, email: true, contactPerson: true } },
-      creator: { select: { id: true, name: true } },
-      items: { orderBy: { description: 'asc' } },
+      machine:  { select: { id: true, name: true, model: true } },
+      creator:  { select: { id: true, name: true } },
+      items:    { orderBy: { description: 'asc' } },
     },
   });
   if (!offer) { res.status(404).json({ message: 'Offer not found' }); return; }
@@ -75,11 +79,12 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
 
-    const { customerId, title, description, offerDate, validUntil, totalAmount, notes, items } = req.body;
+    const { customerId, machineId, title, description, offerDate, validUntil, totalAmount, notes, items } = req.body;
 
     const offer = await prisma.offer.create({
       data: {
         customerId: customerId || undefined,
+        machineId:  machineId  || undefined,
         title,
         description,
         offerDate: offerDate ? new Date(offerDate) : undefined,
@@ -99,7 +104,8 @@ router.post(
       },
       include: {
         customer: { select: { id: true, companyName: true } },
-        creator: { select: { id: true, name: true } },
+        machine:  { select: { id: true, name: true, model: true } },
+        creator:  { select: { id: true, name: true } },
         items: true,
       },
     });
@@ -109,11 +115,12 @@ router.post(
 
 // PUT /api/offers/:id
 router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async (req: AuthenticatedRequest, res: Response) => {
-  const { customerId, title, description, offerDate, validUntil, totalAmount, notes } = req.body;
+  const { customerId, machineId, title, description, offerDate, validUntil, totalAmount, notes } = req.body;
   const offer = await prisma.offer.update({
     where: { id: req.params.id },
     data: {
       customerId: customerId || undefined,
+      machineId:  machineId  || null,
       title,
       description,
       offerDate: offerDate ? new Date(offerDate) : undefined,
@@ -123,6 +130,7 @@ router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async 
     },
     include: {
       customer: { select: { id: true, companyName: true } },
+      machine:  { select: { id: true, name: true, model: true } },
       items: true,
     },
   });

@@ -133,6 +133,8 @@ export interface Offer {
   id: string;
   customerId?: string;
   customer?: { id: string; companyName: string; email?: string; contactPerson?: string };
+  machineId?: string;
+  machine?: { id: string; name: string; model?: string };
   title: string;
   description?: string;
   offerDate: string;

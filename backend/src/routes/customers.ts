@@ -4,15 +4,25 @@ import { UserRole } from '../lib/enums';
 import prisma from '../lib/prisma';
 import { authenticate, requireRole } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
-import { createCustomerFolders, isDriveConfigured } from '../lib/googleDrive';
+import { createCustomerFolders, createDriveFolder, isDriveConfigured } from '../lib/googleDrive';
 
 const router = Router();
 router.use(authenticate);
 
+async function getOrCreateCustomersRoot(): Promise<string> {
+  let rootId = (await prisma.driveConfig.findUnique({ where: { key: 'customers_root' } }))?.value;
+  if (!rootId) {
+    rootId = await createDriveFolder('Customers', process.env.GOOGLE_DRIVE_FOLDER_ID!);
+    await prisma.driveConfig.upsert({ where: { key: 'customers_root' }, update: { value: rootId }, create: { key: 'customers_root', value: rootId } });
+  }
+  return rootId;
+}
+
 async function setupDriveFolders(customerId: string, companyName: string) {
   if (!isDriveConfigured()) return;
   try {
-    const folders = await createCustomerFolders(companyName);
+    const customersRootId = await getOrCreateCustomersRoot();
+    const folders = await createCustomerFolders(companyName, customersRootId);
     await prisma.customer.update({
       where: { id: customerId },
       data: {
@@ -93,7 +103,8 @@ router.post('/:id/setup-drive', requireRole(UserRole.admin, UserRole.project_man
     return;
   }
 
-  const folders = await createCustomerFolders(customer.companyName);
+  const customersRootId = await getOrCreateCustomersRoot();
+  const folders = await createCustomerFolders(customer.companyName, customersRootId);
   const updated = await prisma.customer.update({
     where: { id: req.params.id },
     data: {

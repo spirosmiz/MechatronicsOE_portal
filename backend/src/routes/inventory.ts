@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { UserRole } from '../lib/enums';
-import { createDriveFolder, isDriveConfigured } from '../lib/googleDrive';
+import { createDriveFolder, createInventoryItemFolders, isDriveConfigured } from '../lib/googleDrive';
 import prisma from '../lib/prisma';
 import { authenticate, requireRole } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
@@ -57,7 +57,7 @@ router.post(
     if (isDriveConfigured()) {
       setImmediate(async () => {
         try {
-          await setupInventoryDriveFolders(brand, name, item.id);
+          await setupInventoryDriveFolders(item.partNumber, item.name, item.brand, item.id);
         } catch (err) {
           console.error('Drive folder setup failed for inventory item:', err);
         }
@@ -74,7 +74,7 @@ router.post('/:id/setup-drive', requireRole(UserRole.admin, UserRole.project_man
   if (!isDriveConfigured()) { res.status(503).json({ message: 'Google Drive is not configured' }); return; }
 
   try {
-    const driveFolderId = await setupInventoryDriveFolders(item.brand, item.name, item.id);
+    const driveFolderId = await setupInventoryDriveFolders(item.partNumber, item.name, item.brand, item.id);
     const updated = await prisma.inventory.findUnique({ where: { id: item.id } });
     res.json({ ...updated, driveFolderId, isLowStock: (updated?.stockQuantity ?? 0) <= (updated?.safetyStockLevel ?? 0) });
   } catch (err) {
@@ -113,7 +113,7 @@ export default router;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async function setupInventoryDriveFolders(brand: string | null | undefined, partName: string, itemId: string): Promise<string> {
+async function setupInventoryDriveFolders(partNumber: string, partName: string, brand: string | null, itemId: string): Promise<string> {
   const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID!;
   const effectiveBrand = brand?.trim() || 'General';
   const brandKey = `inventory_brand_${effectiveBrand.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
@@ -130,7 +130,14 @@ async function setupInventoryDriveFolders(brand: string | null | undefined, part
     await prisma.driveConfig.upsert({ where: { key: brandKey }, update: { value: brandFolderId }, create: { key: brandKey, value: brandFolderId } });
   }
 
-  const partFolderId = await createDriveFolder(partName, brandFolderId);
-  await prisma.inventory.update({ where: { id: itemId }, data: { driveFolderId: partFolderId } });
-  return partFolderId;
+  const folders = await createInventoryItemFolders(partNumber, partName, brandFolderId);
+  await prisma.inventory.update({
+    where: { id: itemId },
+    data: {
+      driveFolderId: folders.rootId,
+      drivePhotosFolderId: folders.photosId,
+      driveDatasheetsFolderId: folders.datasheetsId,
+    },
+  });
+  return folders.rootId;
 }

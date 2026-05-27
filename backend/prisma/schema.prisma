@@ -56,6 +56,7 @@ model Machine {
 
   customer  Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   projects  Project[]
+  offers    Offer[]
 
   @@map("machines")
 }
@@ -70,8 +71,10 @@ model Inventory {
   safetyStockLevel Int      @default(5) @map("safety_stock_level")
   unitCost         Decimal  @map("unit_cost")
   unitPrice        Decimal  @map("unit_price")
-  ceCertified      Boolean  @default(true) @map("ce_certified")
-  driveFolderId    String?  @map("drive_folder_id")
+  ceCertified             Boolean  @default(true) @map("ce_certified")
+  driveFolderId           String?  @map("drive_folder_id")
+  drivePhotosFolderId     String?  @map("drive_photos_folder_id")
+  driveDatasheetsFolderId String?  @map("drive_datasheets_folder_id")
 
   projectMaterials ProjectMaterial[]
 
@@ -142,6 +145,7 @@ model ServiceReport {
 model Offer {
   id            String   @id @default(uuid())
   customerId    String?  @map("customer_id")
+  machineId     String?  @map("machine_id")
   title         String
   description   String?
   offerDate     DateTime @default(now()) @map("offer_date")
@@ -154,6 +158,7 @@ model Offer {
   createdAt     DateTime @default(now()) @map("created_at")
 
   customer Customer?   @relation(fields: [customerId], references: [id])
+  machine  Machine?    @relation(fields: [machineId], references: [id])
   creator  User?       @relation("OfferCreator", fields: [createdBy], references: [id])
   items    OfferItem[]
 

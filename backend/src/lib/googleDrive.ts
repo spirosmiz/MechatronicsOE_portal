@@ -42,6 +42,21 @@ async function createFolder(name: string, parentId: string): Promise<string> {
   return data.id!;
 }
 
+export interface InventoryItemFolders {
+  rootId: string;
+  photosId: string;
+  datasheetsId: string;
+}
+
+export async function createInventoryItemFolders(partNumber: string, name: string, brandFolderId: string): Promise<InventoryItemFolders> {
+  const rootId = await createFolder(`${partNumber} - ${name}`, brandFolderId);
+  const [photosId, datasheetsId] = await Promise.all([
+    createFolder('Photos', rootId),
+    createFolder('Datasheets', rootId),
+  ]);
+  return { rootId, photosId, datasheetsId };
+}
+
 export interface CustomerFolders {
   rootId: string;
   mediaId: string;
@@ -49,9 +64,8 @@ export interface CustomerFolders {
   contractsId: string;
 }
 
-export async function createCustomerFolders(companyName: string): Promise<CustomerFolders> {
-  const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID!;
-  const rootId = await createFolder(companyName, rootFolderId);
+export async function createCustomerFolders(companyName: string, customersRootId: string): Promise<CustomerFolders> {
+  const rootId = await createFolder(companyName, customersRootId);
   const [mediaId, offersId, contractsId] = await Promise.all([
     createFolder('Media', rootId),
     createFolder('Offers', rootId),
