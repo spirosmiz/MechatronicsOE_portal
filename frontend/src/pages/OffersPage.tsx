@@ -35,8 +35,10 @@ interface CostBreakdown {
   designRate: string;
   serviceHours: string;
   serviceRate: string;
-  transportHours: string;
-  transportRate: string;
+  transportKm: string;
+  transportRoundTrip: boolean;
+  transportFuelRate: string;
+  transportTollRate: string;
   machiningCost: string;
   partsMode: 'lump' | 'itemized';
   partsLumpSum: string;
@@ -44,9 +46,12 @@ interface CostBreakdown {
 }
 
 const EMPTY_COSTS: CostBreakdown = {
-  designHours: '', designRate: '',
-  serviceHours: '', serviceRate: '',
-  transportHours: '', transportRate: '',
+  designHours: '', designRate: '25',
+  serviceHours: '', serviceRate: '60',
+  transportKm: '',
+  transportRoundTrip: true,
+  transportFuelRate: '15',
+  transportTollRate: '4',
   machiningCost: '',
   partsMode: 'lump',
   partsLumpSum: '',
@@ -112,10 +117,18 @@ export function OffersPage() {
 
   const customerMachines = allMachines.filter((m) => m.customerId === form.customerId);
 
+  function computeTransport() {
+    const km = Number(costs.transportKm || 0);
+    const effectiveKm = km * (costs.transportRoundTrip ? 2 : 1);
+    const fuel = (effectiveKm / 100) * Number(costs.transportFuelRate || 0);
+    const toll = (effectiveKm / 100) * Number(costs.transportTollRate || 0);
+    return { km, effectiveKm, fuel, toll, total: fuel + toll };
+  }
+
   function computeTotal() {
     const design = Number(costs.designHours || 0) * Number(costs.designRate || 0);
     const service = Number(costs.serviceHours || 0) * Number(costs.serviceRate || 0);
-    const transport = Number(costs.transportHours || 0) * Number(costs.transportRate || 0);
+    const transport = computeTransport().total;
     const machining = Number(costs.machiningCost || 0);
     const parts = costs.partsMode === 'lump'
       ? Number(costs.partsLumpSum || 0)
@@ -153,9 +166,8 @@ export function OffersPage() {
       } else if (desc.startsWith('Service / Installation')) {
         parsed.serviceHours = String(item.quantity);
         parsed.serviceRate = String(item.unitPrice);
-      } else if (desc.startsWith('Transportation')) {
-        parsed.transportHours = String(item.quantity);
-        parsed.transportRate = String(item.unitPrice);
+      } else if (desc === 'Transportation') {
+        // Total cost is stored; km/rates cannot be recovered — leave at defaults
       } else if (desc === 'Machining') {
         parsed.machiningCost = String(item.unitPrice);
       } else if (desc === 'Parts') {
@@ -234,23 +246,24 @@ export function OffersPage() {
 
       if (costs.designHours && costs.designRate) {
         items.push({
-          description: `Design Engineering (${costs.designHours}h × ${costs.designRate}€/h)`,
+          description: 'Design Engineering',
           quantity: Number(costs.designHours),
           unitPrice: Number(costs.designRate),
         });
       }
       if (costs.serviceHours && costs.serviceRate) {
         items.push({
-          description: `Service / Installation (${costs.serviceHours}h × ${costs.serviceRate}€/h)`,
+          description: 'Service / Installation',
           quantity: Number(costs.serviceHours),
           unitPrice: Number(costs.serviceRate),
         });
       }
-      if (costs.transportHours && costs.transportRate) {
+      const tr = computeTransport();
+      if (tr.total > 0) {
         items.push({
-          description: `Transportation (${costs.transportHours}h × ${costs.transportRate}€/h)`,
-          quantity: Number(costs.transportHours),
-          unitPrice: Number(costs.transportRate),
+          description: 'Transportation',
+          quantity: 1,
+          unitPrice: tr.total,
         });
       }
       if (costs.machiningCost) {
@@ -334,7 +347,7 @@ export function OffersPage() {
 
   const designTotal = Number(costs.designHours || 0) * Number(costs.designRate || 0);
   const serviceTotal = Number(costs.serviceHours || 0) * Number(costs.serviceRate || 0);
-  const transportTotal = Number(costs.transportHours || 0) * Number(costs.transportRate || 0);
+  const transportTotal = computeTransport().total;
   const partsTotal = costs.partsMode === 'lump'
     ? Number(costs.partsLumpSum || 0)
     : costs.partsItems.reduce((s, p) => s + Number(p.amount || 0), 0);
@@ -662,22 +675,60 @@ export function OffersPage() {
 
               {/* Transportation */}
               <div className="rounded-lg border p-3 space-y-2">
-                <p className="text-xs font-semibold text-orange-700 uppercase tracking-wide">Transportation</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-orange-700 uppercase tracking-wide">Transportation</p>
+                  <button
+                    type="button"
+                    onClick={() => setCosts({ ...costs, transportRoundTrip: !costs.transportRoundTrip })}
+                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                      costs.transportRoundTrip
+                        ? 'bg-orange-100 text-orange-700 border-orange-300'
+                        : 'bg-white text-muted-foreground border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    Round trip {costs.transportRoundTrip ? '✓' : ''}
+                  </button>
+                </div>
                 <div className="flex items-center gap-2">
                   <div className="flex-1">
-                    <Input type="number" min="0" step="0.5" placeholder="Hours" value={costs.transportHours}
-                      onChange={(e) => setCosts({ ...costs, transportHours: e.target.value })} className="h-8 text-sm" />
+                    <Input type="number" min="0" step="1" placeholder="Distance (km)"
+                      value={costs.transportKm}
+                      onChange={(e) => setCosts({ ...costs, transportKm: e.target.value })}
+                      className="h-8 text-sm" />
                   </div>
-                  <span className="text-muted-foreground text-sm">h ×</span>
-                  <div className="flex-1">
-                    <Input type="number" min="0" step="0.01" placeholder="Rate €/h" value={costs.transportRate}
-                      onChange={(e) => setCosts({ ...costs, transportRate: e.target.value })} className="h-8 text-sm" />
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {costs.transportRoundTrip && costs.transportKm
+                      ? `× 2 = ${Number(costs.transportKm) * 2} km`
+                      : 'km'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Fuel rate (€/100 km)</p>
+                    <Input type="number" min="0" step="0.1" value={costs.transportFuelRate}
+                      onChange={(e) => setCosts({ ...costs, transportFuelRate: e.target.value })}
+                      className="h-8 text-sm" />
                   </div>
-                  <span className="text-muted-foreground text-sm">€/h =</span>
-                  <div className="w-24 text-right text-sm font-medium">
-                    {transportTotal > 0 ? formatCurrency(transportTotal) : <span className="text-muted-foreground">—</span>}
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Toll rate (€/100 km)</p>
+                    <Input type="number" min="0" step="0.1" value={costs.transportTollRate}
+                      onChange={(e) => setCosts({ ...costs, transportTollRate: e.target.value })}
+                      className="h-8 text-sm" />
                   </div>
                 </div>
+                {(() => {
+                  const tr = computeTransport();
+                  if (tr.total <= 0) return null;
+                  return (
+                    <div className="flex items-center justify-between bg-orange-50 rounded px-3 py-2 text-xs">
+                      <span className="text-muted-foreground">
+                        Fuel <span className="font-medium text-foreground">{formatCurrency(tr.fuel)}</span>
+                        {' + '}Tolls <span className="font-medium text-foreground">{formatCurrency(tr.toll)}</span>
+                      </span>
+                      <span className="font-semibold text-orange-700">{formatCurrency(tr.total)}</span>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Machining */}

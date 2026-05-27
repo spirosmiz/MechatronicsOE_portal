@@ -4,7 +4,7 @@ import { UserRole, OfferStatus, PaymentStatus } from '../lib/enums';
 import prisma from '../lib/prisma';
 import { authenticate, requireRole } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
-import { isDriveConfigured, createDriveFolder, uploadToDrive } from '../lib/googleDrive';
+import { isDriveConfigured, createDriveFolder, createCustomerFolders, uploadToDrive } from '../lib/googleDrive';
 import { generateOfferPdf, generateOfferDocx, OfferDocumentData } from '../lib/offerDocument';
 
 const router = Router();
@@ -25,6 +25,19 @@ const FULL_INCLUDE = {
   items:    { orderBy: { description: 'asc' } as const },
 };
 
+async function getOrCreateCustomersRoot(): Promise<string> {
+  let rootId = (await prisma.driveConfig.findUnique({ where: { key: 'customers_root' } }))?.value;
+  if (!rootId) {
+    rootId = await createDriveFolder('Customers', process.env.GOOGLE_DRIVE_FOLDER_ID!);
+    await prisma.driveConfig.upsert({
+      where: { key: 'customers_root' },
+      update: { value: rootId },
+      create: { key: 'customers_root', value: rootId },
+    });
+  }
+  return rootId;
+}
+
 // Upload PDF to customer's Drive Offers folder; returns webViewLink or null
 async function uploadOfferPdfToDrive(
   offerId: string,
@@ -35,21 +48,36 @@ async function uploadOfferPdfToDrive(
   try {
     const customer = await prisma.customer.findUnique({
       where: { id: customerId },
-      select: { driveFolderId: true, driveOffersFolderId: true },
+      select: { companyName: true, driveFolderId: true, driveOffersFolderId: true },
     });
     if (!customer) return null;
 
     let offersFolderId = customer.driveOffersFolderId;
 
-    // Auto-create Offers subfolder if parent exists but Offers doesn't
-    if (!offersFolderId && customer.driveFolderId) {
-      offersFolderId = await createDriveFolder('Offers', customer.driveFolderId);
-      await prisma.customer.update({
-        where: { id: customerId },
-        data: { driveOffersFolderId: offersFolderId },
-      });
+    if (!offersFolderId) {
+      if (!customer.driveFolderId) {
+        // No folder tree at all — create the full Customer/Media/Offers/Contracts tree
+        const customersRootId = await getOrCreateCustomersRoot();
+        const folders = await createCustomerFolders(customer.companyName, customersRootId);
+        await prisma.customer.update({
+          where: { id: customerId },
+          data: {
+            driveFolderId:          folders.rootId,
+            driveMediaFolderId:     folders.mediaId,
+            driveOffersFolderId:    folders.offersId,
+            driveContractsFolderId: folders.contractsId,
+          },
+        });
+        offersFolderId = folders.offersId;
+      } else {
+        // Root exists but Offers subfolder is missing — create it
+        offersFolderId = await createDriveFolder('Offers', customer.driveFolderId);
+        await prisma.customer.update({
+          where: { id: customerId },
+          data: { driveOffersFolderId: offersFolderId },
+        });
+      }
     }
-    if (!offersFolderId) return null;
 
     const pdfBuffer = await generateOfferPdf(offer);
     const safeTitle = offer.title.replace(/[^\w\s\-]/g, '').trim().substring(0, 60);

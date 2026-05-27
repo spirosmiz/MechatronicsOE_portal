@@ -1,8 +1,13 @@
 import PDFDocument from 'pdfkit';
+import path from 'path';
+import fs from 'fs';
 import {
   Document, Packer, Paragraph, Table, TableRow, TableCell,
-  TextRun, AlignmentType, WidthType, BorderStyle, VerticalAlign,
+  TextRun, AlignmentType, WidthType, BorderStyle, VerticalAlign, ImageRun,
 } from 'docx';
+
+const LOGO_PATH = path.join(__dirname, '../../assets/machautolabs.png');
+const logoExists = fs.existsSync(LOGO_PATH);
 
 export type OfferDocumentData = {
   id: string;
@@ -48,10 +53,19 @@ export async function generateOfferPdf(offer: OfferDocumentData): Promise<Buffer
 
     // ── Header bar ──────────────────────────────────────────
     doc.rect(0, 0, PW, 75).fill('#0f172a');
-    doc.fontSize(18).font('Helvetica-Bold').fillColor('#ffffff')
-       .text('MECHATRONIQS AUTOMATION', M, 18, { width: W });
-    doc.fontSize(9).font('Helvetica').fillColor('#94a3b8')
-       .text('Industrial Automation & Retrofit Solutions', M, 44, { width: W });
+
+    if (logoExists) {
+      doc.image(LOGO_PATH, M, 10, { height: 55, fit: [160, 55] });
+      doc.fontSize(11).font('Helvetica-Bold').fillColor('#ffffff')
+         .text('AUTOMECHLABS', M + 170, 20, { width: W - 170 });
+      doc.fontSize(8).font('Helvetica').fillColor('#94a3b8')
+         .text('Industrial Automation & Retrofit Solutions', M + 170, 40, { width: W - 170 });
+    } else {
+      doc.fontSize(18).font('Helvetica-Bold').fillColor('#ffffff')
+         .text('AUTOMECHLABS', M, 18, { width: W });
+      doc.fontSize(9).font('Helvetica').fillColor('#94a3b8')
+         .text('Industrial Automation & Retrofit Solutions', M, 44, { width: W });
+    }
 
     // ── Blue title stripe ────────────────────────────────────
     doc.rect(0, 75, PW, 28).fill('#1d4ed8');
@@ -161,7 +175,7 @@ export async function generateOfferPdf(offer: OfferDocumentData): Promise<Buffer
     doc.rect(0, footerY, PW, 1).fill('#e2e8f0');
     doc.fontSize(7.5).font('Helvetica').fillColor('#94a3b8')
        .text(
-         `MECHATRONIQS AUTOMATION  •  Generated ${fmtDate(new Date())}  •  Offer valid until ${fmtDate(offer.validUntil)}`,
+         `AUTOMECHLABS  •  Generated ${fmtDate(new Date())}  •  Offer valid until ${fmtDate(offer.validUntil)}`,
          M, footerY + 7, { width: W, align: 'center' }
        );
 
@@ -209,10 +223,24 @@ function cell(
 export async function generateOfferDocx(offer: OfferDocumentData): Promise<Buffer> {
   const children: (Paragraph | Table)[] = [];
 
-  // Title
+  // Logo + Title
+  if (logoExists) {
+    const logoBuffer = fs.readFileSync(LOGO_PATH);
+    children.push(
+      new Paragraph({
+        children: [
+          new ImageRun({
+            data: logoBuffer,
+            transformation: { width: 160, height: 55 },
+            type: 'png',
+          }),
+        ],
+      }),
+    );
+  }
   children.push(
     new Paragraph({
-      children: [new TextRun({ text: 'MECHATRONIQS AUTOMATION', bold: true, size: 36, color: '0f172a' })],
+      children: [new TextRun({ text: 'AUTOMECHLABS', bold: true, size: 36, color: '0f172a' })],
     }),
     new Paragraph({
       children: [new TextRun({ text: 'Industrial Automation & Retrofit Solutions', size: 18, color: '64748b' })],
