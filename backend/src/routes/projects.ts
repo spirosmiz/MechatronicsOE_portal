@@ -11,6 +11,7 @@ router.use(authenticate);
 const projectInclude = {
   customer: { select: { id: true, companyName: true } },
   machine: { select: { id: true, name: true, model: true } },
+  offer: { select: { id: true, title: true } },
   creator: { select: { id: true, name: true } },
   projectMaterials: {
     include: { inventory: { select: { id: true, partNumber: true, name: true } } },
@@ -33,6 +34,7 @@ router.get('/', async (req, res: Response) => {
     include: {
       customer: { select: { id: true, companyName: true } },
       machine: { select: { id: true, name: true } },
+      offer: { select: { id: true, title: true } },
       creator: { select: { id: true, name: true } },
       _count: { select: { serviceReports: true, projectMaterials: true } },
     },

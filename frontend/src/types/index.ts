@@ -85,6 +85,8 @@ export interface ServiceReport {
 export interface Project {
   id: string;
   customerId?: string;
+  offerId?: string;
+  offer?: { id: string; title: string };
   customer?: { id: string; companyName: string };
   machineId?: string;
   machine?: { id: string; name: string; model?: string };
@@ -129,12 +131,19 @@ export interface OfferItem {
   unitPrice: string | number;
 }
 
+export interface OfferMachine {
+  id: string;
+  offerId: string;
+  machineId: string;
+  machine: { id: string; name: string; model?: string };
+  notes?: string;
+}
+
 export interface Offer {
   id: string;
   customerId?: string;
   customer?: { id: string; companyName: string; email?: string; contactPerson?: string };
-  machineId?: string;
-  machine?: { id: string; name: string; model?: string };
+  machines?: OfferMachine[];
   title: string;
   description?: string;
   offerDate: string;

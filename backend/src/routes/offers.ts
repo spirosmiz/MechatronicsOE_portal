@@ -20,9 +20,10 @@ async function autoExpire() {
 
 const FULL_INCLUDE = {
   customer: { select: { id: true, companyName: true, email: true, contactPerson: true, phone: true, address: true, driveFolderId: true, driveOffersFolderId: true } },
-  machine:  { select: { id: true, name: true, model: true } },
+  machines: { include: { machine: { select: { id: true, name: true, model: true } } } },
   creator:  { select: { id: true, name: true } },
   items:    { orderBy: { description: 'asc' } as const },
+  projects: { select: { id: true, machineId: true } },
 };
 
 async function getOrCreateCustomersRoot(): Promise<string> {
@@ -104,7 +105,7 @@ router.get('/', async (req, res: Response) => {
     where: customerId ? { customerId } : undefined,
     include: {
       customer: { select: { id: true, companyName: true } },
-      machine:  { select: { id: true, name: true, model: true } },
+      machines: { include: { machine: { select: { id: true, name: true, model: true } } } },
       creator:  { select: { id: true, name: true } },
       _count:   { select: { items: true } },
     },
@@ -194,12 +195,11 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
 
-    const { customerId, machineId, title, description, offerDate, validUntil, totalAmount, notes, items } = req.body;
+    const { customerId, machines, title, description, offerDate, validUntil, totalAmount, notes, items } = req.body;
 
     const offer = await prisma.offer.create({
       data: {
         customerId: customerId || undefined,
-        machineId:  machineId  || undefined,
         title,
         description,
         offerDate: offerDate ? new Date(offerDate) : undefined,
@@ -216,6 +216,14 @@ router.post(
             })),
           },
         }),
+        ...(machines?.length && {
+          machines: {
+            create: (machines as { machineId: string; notes?: string }[]).map((m) => ({
+              machineId: m.machineId,
+              notes:     m.notes || null,
+            })),
+          },
+        }),
       },
       include: FULL_INCLUDE,
     });
@@ -229,20 +237,18 @@ router.post(
 
 // PUT /api/offers/:id
 router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async (req: AuthenticatedRequest, res: Response) => {
-  const { customerId, machineId, title, description, offerDate, validUntil, totalAmount, notes, items } = req.body;
+  const { customerId, machines, title, description, offerDate, validUntil, totalAmount, notes, items } = req.body;
 
   const offer = await prisma.offer.update({
     where: { id: req.params.id },
     data: {
       customerId: customerId || undefined,
-      machineId:  machineId  || null,
       title,
       description,
       offerDate: offerDate ? new Date(offerDate) : undefined,
       validUntil: validUntil ? new Date(validUntil) : undefined,
       totalAmount,
       notes,
-      // Reset Drive PDF so a fresh one is generated
       drivePdfId:  null,
       drivePdfUrl: null,
     },
@@ -264,6 +270,20 @@ router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async 
     }
   }
 
+  // Replace machines
+  if (Array.isArray(machines)) {
+    await prisma.offerMachine.deleteMany({ where: { offerId: req.params.id } });
+    if (machines.length > 0) {
+      await prisma.offerMachine.createMany({
+        data: (machines as { machineId: string; notes?: string }[]).map((m) => ({
+          offerId:   req.params.id,
+          machineId: m.machineId,
+          notes:     m.notes || null,
+        })),
+      });
+    }
+  }
+
   // Re-generate and upload PDF to Drive
   uploadOfferPdfToDrive(offer.id, offer as unknown as OfferDocumentData, customerId);
 
@@ -278,11 +298,48 @@ router.patch(
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
+
+    const newStatus: string = req.body.status;
+
     const offer = await prisma.offer.update({
       where: { id: req.params.id },
-      data: { status: req.body.status },
+      data: { status: newStatus },
+      include: {
+        machines: { include: { machine: { select: { id: true, name: true } } } },
+        projects: { select: { id: true, machineId: true } },
+      },
     });
-    res.json(offer);
+
+    let projectsCreated = 0;
+
+    if (newStatus === OfferStatus.accepted) {
+      const existingMachineIds = new Set(offer.projects.map((p) => p.machineId));
+
+      // One project per machine linked to this offer
+      for (const om of offer.machines) {
+        if (existingMachineIds.has(om.machineId)) continue;
+        try {
+          await prisma.project.create({
+            data: {
+              offerId:          offer.id,
+              customerId:       offer.customerId ?? undefined,
+              machineId:        om.machineId,
+              title:            `${offer.title} — ${om.machine.name}`,
+              type:             'retrofit',
+              status:           'approved',
+              quotedTotalPrice: offer.totalAmount,
+              createdBy:        req.user?.userId,
+            },
+          });
+          projectsCreated++;
+        } catch (err) {
+          console.error('[project-create] machine project failed:', err);
+        }
+      }
+
+    }
+
+    res.json({ offer, projectsCreated });
   }
 );
 

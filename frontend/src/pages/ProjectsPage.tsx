@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Search, FolderOpen } from 'lucide-react';
+import { Plus, Search, FolderOpen, FileSignature } from 'lucide-react';
 import { useProjects, useCreateProject, useUpdateProjectStatus, useDeleteProject, useCustomers, useMachines, useInventory } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
@@ -172,6 +172,7 @@ export function ProjectsPage() {
             <TableRow>
               <TableHead>Project</TableHead>
               <TableHead>Customer</TableHead>
+              <TableHead>Offer</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Quoted</TableHead>
@@ -187,7 +188,7 @@ export function ProjectsPage() {
               ))
             ) : filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
                   <FolderOpen className="w-10 h-10 mx-auto mb-2 opacity-30" />
                   No projects found
                 </TableCell>
@@ -205,6 +206,14 @@ export function ProjectsPage() {
                     {p.customer ? (
                       <Link to={`/customers/${p.customer.id}`} className="text-sm hover:text-blue-600">
                         {p.customer.companyName}
+                      </Link>
+                    ) : <span className="text-muted-foreground text-sm">—</span>}
+                  </TableCell>
+                  <TableCell>
+                    {p.offer ? (
+                      <Link to="/offers" className="text-xs flex items-center gap-1 text-blue-600 hover:underline max-w-[160px]" title={p.offer.title}>
+                        <FileSignature className="w-3 h-3 flex-shrink-0" />
+                        <span className="truncate">{p.offer.title}</span>
                       </Link>
                     ) : <span className="text-muted-foreground text-sm">—</span>}
                   </TableCell>

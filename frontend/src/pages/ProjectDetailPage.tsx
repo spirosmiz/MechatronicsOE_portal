@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Edit, Trash2, Plus, FileText, Package, Clock,
-  CheckCircle2, Building2, Cpu, User, Calendar,
+  CheckCircle2, Building2, Cpu, User, Calendar, FileSignature,
 } from 'lucide-react';
 import {
   useProject, useUpdateProject, useUpdateProjectStatus, useDeleteProject,
@@ -227,6 +227,17 @@ export function ProjectDetailPage() {
                   <p className="text-xs text-muted-foreground">Machine</p>
                   <p className="text-sm font-medium">{project.machine.name}</p>
                   {project.machine.model && <p className="text-xs text-muted-foreground">{project.machine.model}</p>}
+                </div>
+              </div>
+            )}
+            {project.offer && (
+              <div className="flex items-center gap-2">
+                <FileSignature className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                <div>
+                  <p className="text-xs text-muted-foreground">Linked Offer</p>
+                  <Link to="/offers" className="text-sm font-medium hover:text-blue-600">
+                    {project.offer.title}
+                  </Link>
                 </div>
               </div>
             )}

@@ -9,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { MediaGalleryDialog } from '@/components/ui/MediaGallery';
 import { Customer } from '@/types';
@@ -286,8 +285,14 @@ export function CustomerDetailPage() {
                       {o.description && <p className="text-xs text-muted-foreground line-clamp-1">{o.description}</p>}
                     </td>
                     <td className="px-4 py-3">
-                      {o.machine ? (
-                        <span className="text-sm text-muted-foreground">{o.machine.name}{o.machine.model ? ` (${o.machine.model})` : ''}</span>
+                      {o.machines && o.machines.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {o.machines.map((m) => (
+                            <span key={m.id} className="text-sm text-muted-foreground block">
+                              {m.machine.name}{m.machine.model ? ` (${m.machine.model})` : ''}
+                            </span>
+                          ))}
+                        </div>
                       ) : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(o.offerDate)}</td>

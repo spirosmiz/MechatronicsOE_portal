@@ -54,9 +54,9 @@ model Machine {
   technicalSpecs String?  @map("technical_specs")
   createdAt      DateTime @default(now()) @map("created_at")
 
-  customer  Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  projects  Project[]
-  offers    Offer[]
+  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  projects      Project[]
+  offerMachines OfferMachine[]
 
   @@map("machines")
 }
@@ -102,8 +102,11 @@ model Project {
   createdBy            String?  @map("created_by")
   createdAt            DateTime @default(now()) @map("created_at")
 
+  offerId  String?  @map("offer_id")
+
   customer         Customer?         @relation(fields: [customerId], references: [id])
   machine          Machine?          @relation(fields: [machineId], references: [id])
+  offer            Offer?            @relation(fields: [offerId], references: [id])
   creator          User?             @relation(fields: [createdBy], references: [id])
   projectMaterials ProjectMaterial[]
   serviceReports   ServiceReport[]
@@ -145,27 +148,39 @@ model ServiceReport {
 model Offer {
   id            String   @id @default(uuid())
   customerId    String?  @map("customer_id")
-  machineId     String?  @map("machine_id")
   title         String
   description   String?
   offerDate     DateTime @default(now()) @map("offer_date")
   validUntil    DateTime @map("valid_until")
-  status        String   @default("draft")        // draft | sent | accepted | rejected | expired
-  paymentStatus String   @default("unpaid") @map("payment_status")  // unpaid | invoiced | partially_paid | paid
+  status        String   @default("draft")
+  paymentStatus String   @default("unpaid") @map("payment_status")
   totalAmount   Decimal  @map("total_amount")
   notes         String?
   createdBy     String?  @map("created_by")
   createdAt     DateTime @default(now()) @map("created_at")
+  drivePdfId    String?  @map("drive_pdf_id")
+  drivePdfUrl   String?  @map("drive_pdf_url")
 
-  drivePdfId  String?  @map("drive_pdf_id")
-  drivePdfUrl String?  @map("drive_pdf_url")
-
-  customer Customer?   @relation(fields: [customerId], references: [id])
-  machine  Machine?    @relation(fields: [machineId], references: [id])
-  creator  User?       @relation("OfferCreator", fields: [createdBy], references: [id])
+  customer Customer?      @relation(fields: [customerId], references: [id])
+  creator  User?          @relation("OfferCreator", fields: [createdBy], references: [id])
   items    OfferItem[]
+  machines OfferMachine[]
+  projects Project[]
 
   @@map("offers")
+}
+
+model OfferMachine {
+  id        String  @id @default(uuid())
+  offerId   String  @map("offer_id")
+  machineId String  @map("machine_id")
+  notes     String?
+
+  offer   Offer   @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@unique([offerId, machineId])
+  @@map("offer_machines")
 }
 
 model OfferItem {

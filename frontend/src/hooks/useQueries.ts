@@ -348,6 +348,7 @@ export function useUpdateOfferStatus() {
       qc.invalidateQueries({ queryKey: KEYS.offers });
       qc.invalidateQueries({ queryKey: KEYS.offer(id) });
       qc.invalidateQueries({ queryKey: KEYS.offerStats });
+      qc.invalidateQueries({ queryKey: ['projects'] }); // auto-created projects
     },
   });
 }

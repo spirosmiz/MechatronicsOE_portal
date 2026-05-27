@@ -26,7 +26,7 @@ export type OfferDocumentData = {
     phone?: string | null;
     address?: string | null;
   } | null;
-  machine?: { name: string; model?: string | null } | null;
+  machines?: { machine: { name: string; model?: string | null }; notes?: string | null }[];
   items?: { description: string; quantity: number; unitPrice: string | number }[];
 };
 
@@ -106,15 +106,16 @@ export async function generateOfferPdf(offer: OfferDocumentData): Promise<Buffer
         if (line) { doc.text(line, M, cy, { width: boxX - M - 15 }); cy += 12; }
       }
     }
-    if (offer.machine) {
+    if (offer.machines && offer.machines.length > 0) {
       cy += 4;
-      const ml = `${offer.machine.name}${offer.machine.model ? ` — ${offer.machine.model}` : ''}`;
-      doc.rect(M, cy - 2, 14 + doc.currentLineHeight() * ml.length * 0.45, 16).fill('#f1f5f9');
-      doc.fontSize(8).font('Helvetica-Bold').fillColor('#475569')
-         .text(`Machine: `, M + 4, cy + 2, { continued: true })
-         .font('Helvetica').text(ml);
+      doc.fontSize(8).font('Helvetica-Bold').fillColor('#475569').text('Machines:', M, cy);
+      cy += 12;
+      for (const om of offer.machines) {
+        const ml = `${om.machine.name}${om.machine.model ? ` (${om.machine.model})` : ''}${om.notes ? ` — ${om.notes}` : ''}`;
+        doc.fontSize(8).font('Helvetica').fillColor('#374151').text(`• ${ml}`, M + 6, cy, { width: boxX - M - 20 });
+        cy += 12;
+      }
       doc.fillColor('#000000');
-      cy += 20;
     }
 
     // ── Items table ──────────────────────────────────────────
@@ -292,17 +293,17 @@ export async function generateOfferDocx(offer: OfferDocumentData): Promise<Buffe
     children.push(new Paragraph({ children: [new TextRun({ text: '' })] }));
   }
 
-  if (offer.machine) {
-    const ml = `${offer.machine.name}${offer.machine.model ? ` — ${offer.machine.model}` : ''}`;
+  if (offer.machines && offer.machines.length > 0) {
     children.push(
-      new Paragraph({
-        children: [
-          new TextRun({ text: 'Machine: ', bold: true, size: 18, color: '374151' }),
-          new TextRun({ text: ml, size: 18, color: '374151' }),
-        ],
-      }),
-      new Paragraph({ children: [new TextRun({ text: '' })] }),
+      new Paragraph({ children: [new TextRun({ text: 'Machines', bold: true, size: 18, color: '374151' })] }),
     );
+    for (const om of offer.machines) {
+      const ml = `${om.machine.name}${om.machine.model ? ` (${om.machine.model})` : ''}${om.notes ? ` — ${om.notes}` : ''}`;
+      children.push(
+        new Paragraph({ children: [new TextRun({ text: `• ${ml}`, size: 18, color: '374151' })] }),
+      );
+    }
+    children.push(new Paragraph({ children: [new TextRun({ text: '' })] }));
   }
 
   // Items table

@@ -20,7 +20,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Offer, OfferItem } from '@/types';
+import { Offer, OfferItem, OfferMachine } from '@/types';
 import {
   formatCurrency, formatDate,
   OFFER_STATUS_COLORS, OFFER_STATUS_LABELS,
@@ -60,13 +60,14 @@ const EMPTY_COSTS: CostBreakdown = {
 
 const EMPTY_FORM = {
   customerId: '',
-  machineId: '',
   title: '',
   description: '',
   offerDate: new Date().toISOString().split('T')[0],
   validUntil: '',
   notes: '',
 };
+
+type MachineRow = { machineId: string; notes: string };
 
 function isOverdue(offer: Offer) {
   return offer.status === 'sent' && new Date(offer.validUntil) < new Date();
@@ -98,6 +99,7 @@ export function OffersPage() {
   const [selected, setSelected] = useState<Offer | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [costs, setCosts] = useState<CostBreakdown>(EMPTY_COSTS);
+  const [offerMachines, setOfferMachines] = useState<MachineRow[]>([]);
 
   const filtered = offers.filter((o) => {
     const matchSearch =
@@ -115,7 +117,15 @@ export function OffersPage() {
     .filter((o) => o.status === 'accepted')
     .reduce((s, o) => s + Number(o.totalAmount), 0);
 
-  const customerMachines = allMachines.filter((m) => m.customerId === form.customerId);
+  const customerMachines = form.customerId
+    ? allMachines.filter((m) => m.customerId === form.customerId)
+    : [];
+
+  const hasGeneralRow = offerMachines.some((m) => !m.machineId);
+  const allSpecificAdded =
+    customerMachines.length > 0 &&
+    customerMachines.every((m) => offerMachines.some((om) => om.machineId === m.id));
+  const canAddRow = !hasGeneralRow || (customerMachines.length > 0 && !allSpecificAdded);
 
   function computeTransport() {
     const km = Number(costs.transportKm || 0);
@@ -140,6 +150,7 @@ export function OffersPage() {
     setEditing(null);
     setForm({ ...EMPTY_FORM, offerDate: new Date().toISOString().split('T')[0] });
     setCosts(EMPTY_COSTS);
+    setOfferMachines([]);
     setOpen(true);
   }
 
@@ -147,13 +158,13 @@ export function OffersPage() {
     setEditing(o);
     setForm({
       customerId: o.customerId ?? '',
-      machineId: o.machineId ?? '',
       title: o.title,
       description: o.description ?? '',
       offerDate: o.offerDate.split('T')[0],
       validUntil: o.validUntil.split('T')[0],
       notes: o.notes ?? '',
     });
+    setOfferMachines((o.machines ?? []).map((m: OfferMachine) => ({ machineId: m.machineId, notes: m.notes ?? '' })));
 
     const items = o.items ?? [];
     const parsed: CostBreakdown = { ...EMPTY_COSTS, partsItems: [] };
@@ -281,7 +292,7 @@ export function OffersPage() {
 
       const data: Record<string, unknown> = {
         customerId: form.customerId || undefined,
-        machineId: form.machineId || undefined,
+        machines: offerMachines.filter((m) => m.machineId),
         title: form.title,
         description: form.description || undefined,
         offerDate: form.offerDate,
@@ -329,8 +340,12 @@ export function OffersPage() {
 
   async function handleStatusChange(id: string, status: string) {
     try {
-      await statusMut.mutateAsync({ id, status });
-      toast({ title: `Status updated to ${OFFER_STATUS_LABELS[status]}` });
+      const res = await statusMut.mutateAsync({ id, status });
+      const created: number = (res as { data?: { projectsCreated?: number } })?.data?.projectsCreated ?? 0;
+      toast({
+        title: `Status updated to ${OFFER_STATUS_LABELS[status]}`,
+        description: created > 0 ? `${created} project${created > 1 ? 's' : ''} created automatically` : undefined,
+      });
     } catch {
       toast({ title: 'Failed to update status', variant: 'destructive' });
     }
@@ -485,11 +500,11 @@ export function OffersPage() {
                           {o.customer.companyName}
                         </Link>
                       )}
-                      {o.machine && (
-                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                          <Cpu className="w-3 h-3" />{o.machine.name}
+                      {o.machines?.map((m) => (
+                        <p key={m.id} className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <Cpu className="w-3 h-3" />{m.machine.name}
                         </p>
-                      )}
+                      ))}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(o.offerDate)}</td>
                     <td className="px-4 py-3">
@@ -588,29 +603,13 @@ export function OffersPage() {
                 <Label>Customer</Label>
                 <Select
                   value={form.customerId || '__none__'}
-                  onValueChange={(v) => setForm({ ...form, customerId: v === '__none__' ? '' : v, machineId: '' })}
+                  onValueChange={(v) => { setForm({ ...form, customerId: v === '__none__' ? '' : v }); setOfferMachines([]); }}
                 >
                   <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— None —</SelectItem>
                     {customers.map((c) => (
                       <SelectItem key={c.id} value={c.id}>{c.companyName}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Machine</Label>
-                <Select
-                  value={form.machineId || '__none__'}
-                  onValueChange={(v) => setForm({ ...form, machineId: v === '__none__' ? '' : v })}
-                  disabled={!form.customerId}
-                >
-                  <SelectTrigger><SelectValue placeholder={form.customerId ? 'Select machine' : 'Select customer first'} /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— None —</SelectItem>
-                    {customerMachines.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>{m.name}{m.model ? ` (${m.model})` : ''}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -626,6 +625,90 @@ export function OffersPage() {
               <div className="col-span-2 space-y-2">
                 <Label>Description</Label>
                 <Textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Brief scope description…" />
+              </div>
+            </div>
+
+            {/* Machines / Work Scope */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Machines / Work Scope</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!canAddRow}
+                  onClick={() => setOfferMachines([...offerMachines, { machineId: '', notes: '' }])}
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" /> Add Machine
+                </Button>
+              </div>
+              {offerMachines.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Add a row per machine, or "General" for work not tied to a specific machine.
+                </p>
+              )}
+              <div className="space-y-2">
+                {offerMachines.map((row, i) => {
+                  const otherIds = new Set(
+                    offerMachines
+                      .filter((_, idx) => idx !== i)
+                      .map((om) => om.machineId)
+                      .filter((id) => !!id)
+                  );
+                  const otherHasGeneral = offerMachines.some((om, idx) => idx !== i && !om.machineId);
+                  const rowOptions = customerMachines.filter((m) => !otherIds.has(m.id));
+                  return (
+                    <div key={i} className="flex gap-2 items-start rounded-lg border p-2 bg-slate-50">
+                      <div className="flex-1 space-y-1.5">
+                        <Select
+                          value={row.machineId || '__general__'}
+                          onValueChange={(v) =>
+                            setOfferMachines(
+                              offerMachines.map((r, idx) =>
+                                idx === i ? { ...r, machineId: v === '__general__' ? '' : v } : r
+                              )
+                            )
+                          }
+                        >
+                          <SelectTrigger className="h-8 text-sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {!otherHasGeneral && (
+                              <SelectItem value="__general__">General (no specific machine)</SelectItem>
+                            )}
+                            {rowOptions.map((m) => (
+                              <SelectItem key={m.id} value={m.id}>
+                                {m.name}{m.model ? ` (${m.model})` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          className="h-7 text-xs"
+                          placeholder="Work notes (optional)"
+                          value={row.notes}
+                          onChange={(e) =>
+                            setOfferMachines(
+                              offerMachines.map((r, idx) =>
+                                idx === i ? { ...r, notes: e.target.value } : r
+                              )
+                            )
+                          }
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive flex-shrink-0"
+                        onClick={() => setOfferMachines(offerMachines.filter((_, idx) => idx !== i))}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -863,13 +946,20 @@ export function OffersPage() {
                     <p>{selected.customer.contactPerson}</p>
                   </>
                 )}
-                {selected.machine && (
+                {selected.machines && selected.machines.length > 0 && (
                   <>
-                    <p className="text-muted-foreground">Machine</p>
-                    <p className="font-medium flex items-center gap-1">
-                      <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
-                      {selected.machine.name}{selected.machine.model ? ` — ${selected.machine.model}` : ''}
-                    </p>
+                    <p className="text-muted-foreground">Machines</p>
+                    <div className="space-y-1">
+                      {selected.machines.map((m) => (
+                        <div key={m.id}>
+                          <p className="font-medium flex items-center gap-1">
+                            <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
+                            {m.machine.name}{m.machine.model ? ` — ${m.machine.model}` : ''}
+                          </p>
+                          {m.notes && <p className="text-xs text-muted-foreground ml-5">{m.notes}</p>}
+                        </div>
+                      ))}
+                    </div>
                   </>
                 )}
                 <p className="text-muted-foreground">Offer Date</p>
