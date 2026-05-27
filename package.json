@@ -6,6 +6,7 @@
   },
   "scripts": {
     "build": "npm install --prefix frontend && npm run build --prefix frontend && npm install --prefix backend && npm run build --prefix backend",
-    "start": "npm start --prefix backend"
+    "start": "npm start --prefix backend",
+    "push": "git add . && git commit -m \"${npm_config_msg:-Update}\" || true && git push origin main"
   }
 }
