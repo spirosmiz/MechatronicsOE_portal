@@ -6,7 +6,15 @@
   },
   "scripts": {
     "build": "npm install --prefix frontend && npm run build --prefix frontend && npm install --prefix backend && npm run build --prefix backend",
-    "start": "npm start --prefix backend",
-    "push": "git add . && git commit -m \"${npm_config_msg:-Update}\" || true && git push origin main"
+    "start": "pm2 start ecosystem.config.js",
+    "stop": "pm2 stop mechatroniqs-backend",
+    "reboot": "pm2 stop mechatroniqs-backend && pm2 delete mechatroniqs-backend && pm2 start ecosystem.config.js && pm2 save",
+    "restart": "pm2 restart mechatroniqs-backend",
+    "logs": "pm2 logs mechatroniqs-backend",
+    "status": "pm2 status",
+    "deploy": "npm run build && pm2 restart mechatroniqs-backend",
+    "push": "git add . && git commit -m \"${npm_config_msg:-Update}\" || true && git push origin main",
+    "pull": "git pull origin main && npm run build && pm2 restart mechatroniqs-backend",
+    "add-user": "npm run add-user --prefix backend"
   }
 }

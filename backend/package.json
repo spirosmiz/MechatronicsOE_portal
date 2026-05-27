@@ -12,7 +12,8 @@
     "prisma:push": "prisma db push",
     "prisma:seed": "ts-node src/prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "drive:authorize": "ts-node scripts/authorize-drive.ts"
+    "drive:authorize": "ts-node scripts/authorize-drive.ts",
+    "add-user": "ts-node scripts/add-user.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.15.0",
