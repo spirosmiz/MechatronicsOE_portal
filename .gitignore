@@ -9,7 +9,7 @@ frontend/dist/
 **/database.sqlite
 **/*.sqlite
 **/*.sqlite3
-prod.db
+**.db
 
 # Εξαίρεση αρχείων με κωδικούς/περιβάλλον
 **.env
