@@ -9,11 +9,17 @@ import { AuthenticatedRequest } from '../types';
 const router = Router();
 router.use(authenticate);
 
+const ITEM_INCLUDE = {
+  supplier: { select: { id: true, companyName: true } },
+};
+
 // GET /api/inventory
 router.get('/', async (req, res: Response) => {
   const { lowStock } = req.query;
-  const items = await prisma.inventory.findMany({ orderBy: { name: 'asc' } });
-  // Field-to-field comparison isn't supported in Prisma WHERE, so filter in JS
+  const items = await prisma.inventory.findMany({
+    orderBy: { name: 'asc' },
+    include: ITEM_INCLUDE,
+  });
   const result = items.map((i) => ({ ...i, isLowStock: i.stockQuantity <= i.safetyStockLevel }));
   if (lowStock === 'true') {
     res.json(result.filter((i) => i.isLowStock));
@@ -24,7 +30,19 @@ router.get('/', async (req, res: Response) => {
 
 // GET /api/inventory/:id
 router.get('/:id', async (req, res: Response) => {
-  const item = await prisma.inventory.findUnique({ where: { id: req.params.id } });
+  const item = await prisma.inventory.findUnique({
+    where: { id: req.params.id },
+    include: {
+      ...ITEM_INCLUDE,
+      supplierQuotes: {
+        include: {
+          supplier: { select: { id: true, companyName: true } },
+          invoice:  { select: { id: true, invoiceNumber: true, totalAmount: true } },
+        },
+        orderBy: { quoteDate: 'desc' },
+      },
+    },
+  });
   if (!item) { res.status(404).json({ message: 'Item not found' }); return; }
   res.json({ ...item, isLowStock: item.stockQuantity <= item.safetyStockLevel });
 });
@@ -49,8 +67,15 @@ router.post(
     const exists = await prisma.inventory.findUnique({ where: { partNumber } });
     if (exists) { res.status(409).json({ message: 'Part number already exists' }); return; }
 
+    const { supplierId } = req.body;
     const item = await prisma.inventory.create({
-      data: { partNumber, brand: brand || null, name, description, stockQuantity, safetyStockLevel, unitCost, unitPrice, ceCertified: ceCertified ?? true },
+      data: {
+        partNumber, brand: brand || null, name, description,
+        stockQuantity, safetyStockLevel, unitCost, unitPrice,
+        ceCertified: ceCertified ?? true,
+        supplierId: supplierId || null,
+      },
+      include: ITEM_INCLUDE,
     });
     res.status(201).json({ ...item, isLowStock: item.stockQuantity <= item.safetyStockLevel });
 
@@ -85,10 +110,15 @@ router.post('/:id/setup-drive', requireRole(UserRole.admin, UserRole.project_man
 
 // PUT /api/inventory/:id
 router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async (req, res: Response) => {
-  const { partNumber, brand, name, description, stockQuantity, safetyStockLevel, unitCost, unitPrice, ceCertified } = req.body;
+  const { partNumber, brand, name, description, stockQuantity, safetyStockLevel, unitCost, unitPrice, ceCertified, supplierId } = req.body;
   const item = await prisma.inventory.update({
     where: { id: req.params.id },
-    data: { partNumber, brand: brand || null, name, description, stockQuantity, safetyStockLevel, unitCost, unitPrice, ceCertified },
+    data: {
+      partNumber, brand: brand || null, name, description,
+      stockQuantity, safetyStockLevel, unitCost, unitPrice, ceCertified,
+      supplierId: supplierId || null,
+    },
+    include: ITEM_INCLUDE,
   });
   res.json({ ...item, isLowStock: item.stockQuantity <= item.safetyStockLevel });
 });
@@ -106,6 +136,89 @@ router.patch('/:id/stock', requireRole(UserRole.admin, UserRole.project_manager,
 // DELETE /api/inventory/:id
 router.delete('/:id', requireRole(UserRole.admin), async (req, res: Response) => {
   await prisma.inventory.delete({ where: { id: req.params.id } });
+  res.status(204).send();
+});
+
+// ─── Supplier Quotes ──────────────────────────────────────────────────────────
+
+const QUOTE_INCLUDE = {
+  supplier: { select: { id: true, companyName: true } },
+  invoice:  { select: { id: true, invoiceNumber: true, totalAmount: true } },
+};
+
+// GET /api/inventory/:id/quotes
+router.get('/:id/quotes', async (req, res: Response) => {
+  const quotes = await prisma.supplierQuote.findMany({
+    where:   { inventoryId: req.params.id },
+    include: QUOTE_INCLUDE,
+    orderBy: { quoteDate: 'desc' },
+  });
+  res.json(quotes);
+});
+
+// POST /api/inventory/:id/quotes
+router.post(
+  '/:id/quotes',
+  requireRole(UserRole.admin, UserRole.project_manager),
+  [
+    body('unitPrice').isFloat({ min: 0 }),
+    body('quoteDate').isISO8601(),
+  ],
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
+
+    const { supplierId, vendorName, quoteRef, unitPrice, currency, quoteDate, validUntil, invoiceId, notes, documentUrl } = req.body;
+
+    if (!supplierId && !vendorName) {
+      res.status(400).json({ message: 'Either supplierId or vendorName is required' }); return;
+    }
+
+    const quote = await prisma.supplierQuote.create({
+      data: {
+        inventoryId: req.params.id,
+        supplierId:  supplierId  || null,
+        vendorName:  vendorName  || null,
+        quoteRef:    quoteRef    || null,
+        unitPrice:   Number(unitPrice),
+        currency:    currency    || 'EUR',
+        quoteDate:   new Date(quoteDate),
+        validUntil:  validUntil  ? new Date(validUntil) : null,
+        invoiceId:   invoiceId   || null,
+        notes:       notes       || null,
+        documentUrl: documentUrl || null,
+      },
+      include: QUOTE_INCLUDE,
+    });
+    res.status(201).json(quote);
+  }
+);
+
+// PUT /api/inventory/:id/quotes/:quoteId
+router.put('/:id/quotes/:quoteId', requireRole(UserRole.admin, UserRole.project_manager), async (req, res: Response) => {
+  const { supplierId, vendorName, quoteRef, unitPrice, currency, quoteDate, validUntil, invoiceId, notes, documentUrl } = req.body;
+  const quote = await prisma.supplierQuote.update({
+    where:   { id: req.params.quoteId },
+    data: {
+      supplierId:  supplierId  || null,
+      vendorName:  vendorName  || null,
+      quoteRef:    quoteRef    || null,
+      unitPrice:   unitPrice   !== undefined ? Number(unitPrice) : undefined,
+      currency:    currency    || undefined,
+      quoteDate:   quoteDate   ? new Date(quoteDate) : undefined,
+      validUntil:  validUntil  ? new Date(validUntil) : null,
+      invoiceId:   invoiceId   || null,
+      notes:       notes       || null,
+      documentUrl: documentUrl || null,
+    },
+    include: QUOTE_INCLUDE,
+  });
+  res.json(quote);
+});
+
+// DELETE /api/inventory/:id/quotes/:quoteId
+router.delete('/:id/quotes/:quoteId', requireRole(UserRole.admin, UserRole.project_manager), async (req, res: Response) => {
+  await prisma.supplierQuote.delete({ where: { id: req.params.quoteId } });
   res.status(204).send();
 });
 

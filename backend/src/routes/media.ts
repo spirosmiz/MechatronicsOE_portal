@@ -13,7 +13,15 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/x-msvideo', 'application/pdf'];
+    const allowed = [
+      'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+      'video/mp4', 'video/quicktime', 'video/x-msvideo',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ];
     cb(null, allowed.includes(file.mimetype));
   },
 });
@@ -74,6 +82,77 @@ async function resolveFolderId(entityType: string, entityId: string, subfolder: 
     }
 
     return customer.driveMediaFolderId ?? undefined;
+  }
+
+  if (entityType === 'service_report') {
+    const report = await prisma.serviceReport.findUnique({
+      where: { id: entityId },
+      include: { project: { include: { customer: true } } },
+    });
+    if (!report) return undefined;
+
+    const customer = report.project?.customer ?? null;
+
+    if (customer) {
+      // ── Has customer: store under Customer / Service Reports ─────────────────
+      if (!customer.driveFolderId && isDriveConfigured()) {
+        const customersRootId = await getOrCreateCustomersRoot();
+        const folders = await createCustomerFolders(customer.companyName, customersRootId);
+        await prisma.customer.update({
+          where: { id: customer.id },
+          data: {
+            driveFolderId:          folders.rootId,
+            driveMediaFolderId:     folders.mediaId,
+            driveOffersFolderId:    folders.offersId,
+            driveContractsFolderId: folders.contractsId,
+          },
+        });
+        const refreshed = await prisma.customer.findUnique({ where: { id: customer.id } });
+        if (refreshed) Object.assign(customer, refreshed);
+      }
+
+      if (!customer.driveServiceReportsFolderId && customer.driveFolderId && isDriveConfigured()) {
+        const folderId = await createDriveFolder('Service Reports', customer.driveFolderId);
+        await prisma.customer.update({
+          where: { id: customer.id },
+          data: { driveServiceReportsFolderId: folderId },
+        });
+        return folderId;
+      }
+
+      return customer.driveServiceReportsFolderId ?? undefined;
+    } else {
+      // ── No customer: Service Reports / {projectId} / ─────────────────────────
+      const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID!;
+
+      // Ensure root "Service Reports" folder exists
+      let srRootId = (await prisma.driveConfig.findUnique({ where: { key: 'service_reports_root' } }))?.value;
+      if (!srRootId && isDriveConfigured()) {
+        srRootId = await createDriveFolder('Service Reports', rootFolderId);
+        await prisma.driveConfig.upsert({
+          where:  { key: 'service_reports_root' },
+          update: { value: srRootId },
+          create: { key: 'service_reports_root', value: srRootId },
+        });
+      }
+      if (!srRootId) return undefined;
+
+      // Ensure per-project subfolder exists, cached in DriveConfig
+      const projectKey = `sr_project_${report.projectId}`;
+      let projectFolderId = (await prisma.driveConfig.findUnique({ where: { key: projectKey } }))?.value;
+      if (!projectFolderId && isDriveConfigured()) {
+        const label = report.project?.title
+          ? `${report.project.title} (${report.projectId})`
+          : report.projectId;
+        projectFolderId = await createDriveFolder(label, srRootId);
+        await prisma.driveConfig.upsert({
+          where:  { key: projectKey },
+          update: { value: projectFolderId },
+          create: { key: projectKey, value: projectFolderId },
+        });
+      }
+      return projectFolderId ?? undefined;
+    }
   }
 
   if (entityType === 'inventory') {

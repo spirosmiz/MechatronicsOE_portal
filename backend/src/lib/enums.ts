@@ -44,3 +44,63 @@ export const PaymentStatus = {
 } as const;
 
 export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus];
+
+export const InvoiceDirection = {
+  OUTGOING: 'OUTGOING',
+  INCOMING: 'INCOMING',
+} as const;
+
+export type InvoiceDirection = (typeof InvoiceDirection)[keyof typeof InvoiceDirection];
+
+export const InvoiceCategory = {
+  // OUTGOING
+  PROJECT_BILLING: 'PROJECT_BILLING',
+  SERVICE_BILLING: 'SERVICE_BILLING',
+  PARTS_SALE: 'PARTS_SALE',
+  // INCOMING
+  LABOR_SERVICE_ENGINEER: 'LABOR_SERVICE_ENGINEER',
+  LABOR_DESIGN_ENGINEER: 'LABOR_DESIGN_ENGINEER',
+  MACHINING_SUBCONTRACT: 'MACHINING_SUBCONTRACT',
+  SPARE_PARTS_PURCHASE: 'SPARE_PARTS_PURCHASE',
+  OPERATIONAL: 'OPERATIONAL',
+} as const;
+
+export type InvoiceCategory = (typeof InvoiceCategory)[keyof typeof InvoiceCategory];
+
+export const InvoiceStatus = {
+  DRAFT: 'DRAFT',
+  ISSUED: 'ISSUED',
+  SENT: 'SENT',
+  PARTIALLY_PAID: 'PARTIALLY_PAID',
+  PAID: 'PAID',
+  OVERDUE: 'OVERDUE',
+  CANCELLED: 'CANCELLED',
+} as const;
+
+export type InvoiceStatus = (typeof InvoiceStatus)[keyof typeof InvoiceStatus];
+
+export const PaymentMethod = {
+  BANK_TRANSFER: 'BANK_TRANSFER',
+  CASH: 'CASH',
+  CHECK: 'CHECK',
+  CARD: 'CARD',
+} as const;
+
+export type PaymentMethod = (typeof PaymentMethod)[keyof typeof PaymentMethod];
+
+export const LaborRoleType = {
+  SERVICE_ENGINEER: 'SERVICE_ENGINEER',
+  DESIGN_ENGINEER: 'DESIGN_ENGINEER',
+  PROJECT_MANAGER: 'PROJECT_MANAGER',
+} as const;
+
+export type LaborRoleType = (typeof LaborRoleType)[keyof typeof LaborRoleType];
+
+export const SupplierCategory = {
+  PARTS: 'PARTS',
+  MACHINING: 'MACHINING',
+  SERVICES: 'SERVICES',
+  ENGINEERING: 'ENGINEERING',
+} as const;
+
+export type SupplierCategory = (typeof SupplierCategory)[keyof typeof SupplierCategory];

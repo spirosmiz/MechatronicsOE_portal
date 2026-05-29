@@ -16,6 +16,10 @@ import { ServiceReportsPage } from './pages/ServiceReportsPage';
 import { UsersPage } from './pages/UsersPage';
 import { OffersPage } from './pages/OffersPage';
 import { CustomerDetailPage } from './pages/CustomerDetailPage';
+import { InvoicesPage } from './pages/InvoicesPage';
+import { InvoiceDetailPage } from './pages/InvoiceDetailPage';
+import { SuppliersPage } from './pages/SuppliersPage';
+import { LaborRatesPage } from './pages/LaborRatesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -50,6 +54,10 @@ export default function App() {
               <Route path="projects/:id" element={<ProjectDetailPage />} />
               <Route path="service-reports" element={<ServiceReportsPage />} />
               <Route path="offers" element={<OffersPage />} />
+              <Route path="invoices" element={<InvoicesPage />} />
+              <Route path="invoices/:id" element={<InvoiceDetailPage />} />
+              <Route path="suppliers" element={<SuppliersPage />} />
+              <Route path="labor-rates" element={<LaborRatesPage />} />
               <Route path="users" element={<UsersPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

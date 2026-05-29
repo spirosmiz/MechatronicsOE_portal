@@ -55,7 +55,7 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
 
-    const { projectId, workPerformed, hoursLogged, digitalSignature } = req.body;
+    const { projectId, workPerformed, hoursLogged, workType, digitalSignature } = req.body;
 
     const report = await prisma.serviceReport.create({
       data: {
@@ -63,6 +63,7 @@ router.post(
         technicianId: req.user!.userId,
         workPerformed,
         hoursLogged,
+        workType:    workType || null,
         digitalSignature,
       },
       include: {
@@ -86,10 +87,10 @@ router.patch(
   '/:id',
   requireRole(UserRole.admin),
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const { workPerformed, hoursLogged, digitalSignature } = req.body;
+    const { workPerformed, hoursLogged, workType, digitalSignature } = req.body;
     const report = await prisma.serviceReport.update({
       where: { id: req.params.id },
-      data: { workPerformed, hoursLogged, digitalSignature },
+      data: { workPerformed, hoursLogged, workType: workType || null, digitalSignature },
     });
     res.json(report);
   }

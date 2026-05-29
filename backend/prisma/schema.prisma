@@ -15,10 +15,12 @@ model User {
   role           String   @default("technician")
   createdAt      DateTime @default(now()) @map("created_at")
 
-  projects        Project[]
-  serviceReports  ServiceReport[]
-  offersCreated   Offer[]       @relation("OfferCreator")
-  mediaUploaded   MediaFile[]   @relation("MediaUploader")
+  projects         Project[]
+  serviceReports   ServiceReport[]
+  offersCreated    Offer[]       @relation("OfferCreator")
+  mediaUploaded    MediaFile[]   @relation("MediaUploader")
+  invoicesCreated  Invoice[]     @relation("InvoiceCreator")
+  paymentsRecorded Payment[]     @relation("PaymentRecorder")
 
   @@map("users")
 }
@@ -32,14 +34,16 @@ model Customer {
   phone                  String?
   address                String
   createdAt              DateTime @default(now()) @map("created_at")
-  driveFolderId          String?  @map("drive_folder_id")
-  driveMediaFolderId     String?  @map("drive_media_folder_id")
-  driveOffersFolderId    String?  @map("drive_offers_folder_id")
-  driveContractsFolderId String?  @map("drive_contracts_folder_id")
+  driveFolderId                String?  @map("drive_folder_id")
+  driveMediaFolderId           String?  @map("drive_media_folder_id")
+  driveOffersFolderId          String?  @map("drive_offers_folder_id")
+  driveContractsFolderId       String?  @map("drive_contracts_folder_id")
+  driveServiceReportsFolderId  String?  @map("drive_service_reports_folder_id")
 
   machines  Machine[]
   projects  Project[]
   offers    Offer[]
+  invoices  Invoice[]
 
   @@map("customers")
 }
@@ -75,8 +79,11 @@ model Inventory {
   driveFolderId           String?  @map("drive_folder_id")
   drivePhotosFolderId     String?  @map("drive_photos_folder_id")
   driveDatasheetsFolderId String?  @map("drive_datasheets_folder_id")
+  supplierId              String?  @map("supplier_id")
 
+  supplier         Supplier?         @relation(fields: [supplierId], references: [id])
   projectMaterials ProjectMaterial[]
+  supplierQuotes   SupplierQuote[]
 
   @@map("inventory")
 }
@@ -110,6 +117,7 @@ model Project {
   creator          User?             @relation(fields: [createdBy], references: [id])
   projectMaterials ProjectMaterial[]
   serviceReports   ServiceReport[]
+  invoices         Invoice[]
 
   @@map("projects")
 }
@@ -118,6 +126,7 @@ model ProjectMaterial {
   id               String  @id @default(uuid())
   projectId        String  @map("project_id")
   inventoryId      String? @map("inventory_id")
+  description      String? // for custom parts not in inventory
   quantityRequired Int     @map("quantity_required")
   unitCostAtQuote  Decimal @map("unit_cost_at_quote")
   unitPriceAtQuote Decimal @map("unit_price_at_quote")
@@ -134,6 +143,7 @@ model ServiceReport {
   technicianId     String?  @map("technician_id")
   workPerformed    String   @map("work_performed")
   hoursLogged      Decimal  @map("hours_logged")
+  workType         String?  @map("work_type") // SERVICE_ENGINEER | DESIGN_ENGINEER | PROJECT_MANAGER
   digitalSignature String?  @map("digital_signature")
   submittedAt      DateTime @default(now()) @map("submitted_at")
 
@@ -166,6 +176,7 @@ model Offer {
   items    OfferItem[]
   machines OfferMachine[]
   projects Project[]
+  invoices Invoice[]
 
   @@map("offers")
 }
@@ -212,4 +223,126 @@ model MediaFile {
   uploader User? @relation("MediaUploader", fields: [uploadedBy], references: [id])
 
   @@map("media_files")
+}
+
+// ─── Financials ───────────────────────────────────────────────────────────────
+
+model Supplier {
+  id            String   @id @default(uuid())
+  companyName   String   @map("company_name")
+  vatNumber     String?  @unique @map("vat_number")
+  contactPerson String?  @map("contact_person")
+  email         String?
+  phone         String?
+  address       String?
+  categories    String   @default("[]") // JSON: string[] — PARTS | MACHINING | SERVICES | ENGINEERING
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  invoices       Invoice[]
+  inventoryItems Inventory[]
+  supplierQuotes SupplierQuote[]
+
+  @@map("suppliers")
+}
+
+model LaborRate {
+  id            String    @id @default(uuid())
+  role          String    // SERVICE_ENGINEER | DESIGN_ENGINEER | PROJECT_MANAGER
+  ratePerHour   Decimal   @map("rate_per_hour")
+  currency      String    @default("EUR")
+  effectiveFrom DateTime  @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("labor_rates")
+}
+
+model Invoice {
+  id            String    @id @default(uuid())
+  invoiceNumber String    @unique @map("invoice_number")
+  direction     String    // OUTGOING | INCOMING
+  category      String    // PROJECT_BILLING | SERVICE_BILLING | PARTS_SALE | LABOR_SERVICE_ENGINEER | LABOR_DESIGN_ENGINEER | MACHINING_SUBCONTRACT | SPARE_PARTS_PURCHASE | OPERATIONAL
+  customerId    String?   @map("customer_id")
+  supplierId    String?   @map("supplier_id")
+  projectId     String?   @map("project_id")
+  offerId       String?   @map("offer_id")
+  subtotal      Decimal
+  taxRate       Decimal   @default(0.24) @map("tax_rate")
+  taxAmount     Decimal   @map("tax_amount")
+  totalAmount   Decimal   @map("total_amount")
+  currency      String    @default("EUR")
+  status        String    @default("DRAFT") // DRAFT | ISSUED | SENT | PARTIALLY_PAID | PAID | OVERDUE | CANCELLED
+  issueDate     DateTime? @map("issue_date")
+  dueDate       DateTime? @map("due_date")
+  driveFileId   String?   @map("drive_file_id")
+  driveUrl      String?   @map("drive_url")
+  notes         String?
+  createdById   String    @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  items          InvoiceItem[]
+  payments       Payment[]
+  supplierQuotes SupplierQuote[]
+  customer  Customer?    @relation(fields: [customerId], references: [id])
+  supplier  Supplier?    @relation(fields: [supplierId], references: [id])
+  project   Project?     @relation(fields: [projectId], references: [id])
+  offer     Offer?       @relation(fields: [offerId], references: [id])
+  createdBy User         @relation("InvoiceCreator", fields: [createdById], references: [id])
+
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String   @map("invoice_id")
+  description String
+  quantity    Decimal
+  unitPrice   Decimal  @map("unit_price")
+  lineTotal   Decimal  @map("line_total")
+  hoursLogged Decimal? @map("hours_logged")
+  hourlyRate  Decimal? @map("hourly_rate")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items")
+}
+
+model Payment {
+  id           String   @id @default(uuid())
+  invoiceId    String   @map("invoice_id")
+  amount       Decimal
+  paidAt       DateTime @map("paid_at")
+  method       String   // BANK_TRANSFER | CASH | CHECK | CARD
+  reference    String?
+  notes        String?
+  recordedById String   @map("recorded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  invoice    Invoice @relation(fields: [invoiceId], references: [id])
+  recordedBy User    @relation("PaymentRecorder", fields: [recordedById], references: [id])
+
+  @@map("payments")
+}
+
+model SupplierQuote {
+  id          String    @id @default(uuid())
+  inventoryId String    @map("inventory_id")
+  supplierId  String?   @map("supplier_id")
+  vendorName  String?   @map("vendor_name")   // free-text for vendors not in Supplier table
+  quoteRef    String?   @map("quote_ref")
+  unitPrice   Decimal   @map("unit_price")
+  currency    String    @default("EUR")
+  quoteDate   DateTime  @map("quote_date")
+  validUntil  DateTime? @map("valid_until")
+  invoiceId   String?   @map("invoice_id")   // purchase invoice when this quote became an order
+  notes       String?
+  documentUrl String?   @map("document_url")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  supplier  Supplier? @relation(fields: [supplierId], references: [id])
+  invoice   Invoice?  @relation(fields: [invoiceId], references: [id])
+
+  @@map("supplier_quotes")
 }

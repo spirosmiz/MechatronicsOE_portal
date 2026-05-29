@@ -307,39 +307,104 @@ router.patch(
       include: {
         machines: { include: { machine: { select: { id: true, name: true } } } },
         projects: { select: { id: true, machineId: true } },
+        items:    true,
       },
     });
 
     let projectsCreated = 0;
+    const creationErrors: string[] = [];
 
     if (newStatus === OfferStatus.accepted) {
-      const existingMachineIds = new Set(offer.projects.map((p) => p.machineId));
 
-      // One project per machine linked to this offer
-      for (const om of offer.machines) {
-        if (existingMachineIds.has(om.machineId)) continue;
-        try {
-          await prisma.project.create({
-            data: {
-              offerId:          offer.id,
-              customerId:       offer.customerId ?? undefined,
-              machineId:        om.machineId,
-              title:            `${offer.title} — ${om.machine.name}`,
-              type:             'retrofit',
-              status:           'approved',
-              quotedTotalPrice: offer.totalAmount,
-              createdBy:        req.user?.userId,
-            },
-          });
-          projectsCreated++;
-        } catch (err) {
-          console.error('[project-create] machine project failed:', err);
+      // ── Parse offer items into labor hours + material records ──────────────
+      let estimatedLaborHours = 0;
+      const materialItems: { description: string; unitPrice: number; quantity: number }[] = [];
+
+      for (const item of offer.items) {
+        const desc = item.description;
+        const qty  = Number(item.quantity);
+        const price = Number(item.unitPrice);
+
+        if (desc.startsWith('Design Engineering') || desc.startsWith('Service / Installation')) {
+          // quantity = hours logged in the offer cost breakdown
+          estimatedLaborHours += qty;
+        } else if (desc === 'Machining' || desc === 'Parts' || desc.startsWith('Parts — ')) {
+          const label = desc.startsWith('Parts — ') ? desc.slice(8) : desc;
+          materialItems.push({ description: label, unitPrice: price, quantity: qty });
         }
+        // Transportation is skipped — it's a travel cost, not a project material
       }
 
+      // ── Helper: create ProjectMaterial records for a newly created project ──
+      async function seedMaterials(projectId: string) {
+        if (materialItems.length === 0) return;
+        await prisma.projectMaterial.createMany({
+          data: materialItems.map((m) => ({
+            projectId,
+            inventoryId:      null,
+            description:      m.description,
+            quantityRequired: m.quantity,
+            unitCostAtQuote:  m.unitPrice,
+            unitPriceAtQuote: m.unitPrice,
+          })),
+        });
+      }
+
+      const existingMachineIds = new Set(offer.projects.map((p) => p.machineId));
+      const hasGenericProject   = offer.projects.some((p) => p.machineId == null);
+
+      if (offer.machines.length === 0) {
+        if (!hasGenericProject) {
+          try {
+            const project = await prisma.project.create({
+              data: {
+                offerId:              offer.id,
+                customerId:           offer.customerId ?? undefined,
+                title:                offer.title,
+                type:                 'retrofit',
+                status:               'approved',
+                quotedTotalPrice:     offer.totalAmount,
+                estimatedLaborHours,
+                createdBy:            req.user?.userId,
+              },
+            });
+            await seedMaterials(project.id);
+            projectsCreated++;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error('[project-create] generic project failed:', msg);
+            creationErrors.push(msg);
+          }
+        }
+      } else {
+        for (const om of offer.machines) {
+          if (existingMachineIds.has(om.machineId)) continue;
+          try {
+            const project = await prisma.project.create({
+              data: {
+                offerId:              offer.id,
+                customerId:           offer.customerId ?? undefined,
+                machineId:            om.machineId,
+                title:                `${offer.title} — ${om.machine.name}`,
+                type:                 'retrofit',
+                status:               'approved',
+                quotedTotalPrice:     offer.totalAmount,
+                estimatedLaborHours,
+                createdBy:            req.user?.userId,
+              },
+            });
+            await seedMaterials(project.id);
+            projectsCreated++;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error('[project-create] machine project failed:', msg);
+            creationErrors.push(msg);
+          }
+        }
+      }
     }
 
-    res.json({ offer, projectsCreated });
+    res.json({ offer, projectsCreated, creationErrors });
   }
 );
 

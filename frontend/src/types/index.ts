@@ -40,6 +40,24 @@ export interface Machine {
   createdAt: string;
 }
 
+export interface SupplierQuote {
+  id: string;
+  inventoryId: string;
+  supplierId?: string | null;
+  supplier?: { id: string; companyName: string } | null;
+  vendorName?: string | null;
+  quoteRef?: string | null;
+  unitPrice: string | number;
+  currency: string;
+  quoteDate: string;
+  validUntil?: string | null;
+  invoiceId?: string | null;
+  invoice?: { id: string; invoiceNumber: string; totalAmount: string | number } | null;
+  notes?: string | null;
+  documentUrl?: string | null;
+  createdAt: string;
+}
+
 export interface InventoryItem {
   id: string;
   partNumber: string;
@@ -53,6 +71,9 @@ export interface InventoryItem {
   ceCertified: boolean;
   driveFolderId?: string;
   isLowStock?: boolean;
+  supplierId?: string | null;
+  supplier?: { id: string; companyName: string } | null;
+  supplierQuotes?: SupplierQuote[];
 }
 
 export interface ProjectMaterial {
@@ -60,6 +81,7 @@ export interface ProjectMaterial {
   projectId: string;
   inventoryId?: string;
   inventory?: { id: string; partNumber: string; name: string };
+  description?: string | null;
   quantityRequired: number;
   unitCostAtQuote: string | number;
   unitPriceAtQuote: string | number;
@@ -78,6 +100,7 @@ export interface ServiceReport {
   };
   workPerformed: string;
   hoursLogged: string | number;
+  workType?: string | null;
   digitalSignature?: string;
   submittedAt: string;
 }
@@ -86,7 +109,7 @@ export interface Project {
   id: string;
   customerId?: string;
   offerId?: string;
-  offer?: { id: string; title: string };
+  offer?: { id: string; title: string; items?: OfferItem[] };
   customer?: { id: string; companyName: string };
   machineId?: string;
   machine?: { id: string; name: string; model?: string };
@@ -166,6 +189,107 @@ export interface OfferStats {
   byPayment: { paymentStatus: PaymentStatus; _count: number }[];
   totalValue: string | null;
   pendingCount: number;
+}
+
+// ─── Financials ───────────────────────────────────────────────────────────────
+
+export type InvoiceDirection = 'OUTGOING' | 'INCOMING';
+export type InvoiceStatus = 'DRAFT' | 'ISSUED' | 'SENT' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE' | 'CANCELLED';
+export type InvoiceCategory =
+  | 'PROJECT_BILLING' | 'SERVICE_BILLING' | 'PARTS_SALE'
+  | 'LABOR_SERVICE_ENGINEER' | 'LABOR_DESIGN_ENGINEER'
+  | 'MACHINING_SUBCONTRACT' | 'SPARE_PARTS_PURCHASE' | 'OPERATIONAL';
+export type PaymentMethod = 'BANK_TRANSFER' | 'CASH' | 'CHECK' | 'CARD';
+export type LaborRoleType = 'SERVICE_ENGINEER' | 'DESIGN_ENGINEER' | 'PROJECT_MANAGER';
+
+export interface Supplier {
+  id: string;
+  companyName: string;
+  vatNumber?: string;
+  contactPerson?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  categories: string; // JSON string[]
+  createdAt: string;
+  _count?: { invoices: number };
+}
+
+export interface LaborRate {
+  id: string;
+  role: LaborRoleType;
+  ratePerHour: string | number;
+  currency: string;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+  createdAt: string;
+}
+
+export interface InvoiceItem {
+  id: string;
+  invoiceId: string;
+  description: string;
+  quantity: string | number;
+  unitPrice: string | number;
+  lineTotal: string | number;
+  hoursLogged?: string | number | null;
+  hourlyRate?: string | number | null;
+}
+
+export interface InvoicePayment {
+  id: string;
+  invoiceId: string;
+  amount: string | number;
+  paidAt: string;
+  method: PaymentMethod;
+  reference?: string | null;
+  notes?: string | null;
+  recordedById: string;
+  recordedBy?: { id: string; name: string };
+  createdAt: string;
+}
+
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  direction: InvoiceDirection;
+  category: InvoiceCategory;
+  customerId?: string | null;
+  customer?: { id: string; companyName: string; vatNumber?: string } | null;
+  supplierId?: string | null;
+  supplier?: { id: string; companyName: string; vatNumber?: string } | null;
+  projectId?: string | null;
+  project?: { id: string; title: string } | null;
+  offerId?: string | null;
+  offer?: { id: string; title: string } | null;
+  subtotal: string | number;
+  taxRate: string | number;
+  taxAmount: string | number;
+  totalAmount: string | number;
+  currency: string;
+  status: InvoiceStatus;
+  issueDate?: string | null;
+  dueDate?: string | null;
+  driveFileId?: string | null;
+  driveUrl?: string | null;
+  notes?: string | null;
+  createdById: string;
+  createdBy?: { id: string; name: string };
+  createdAt: string;
+  updatedAt: string;
+  items?: InvoiceItem[];
+  payments?: InvoicePayment[];
+  _count?: { items: number; payments: number };
+}
+
+export interface InvoiceStats {
+  totalIncome: string | number;
+  totalExpenses: string | number;
+  outgoingCount: number;
+  incomingCount: number;
+  outstanding: string | number;
+  byStatus: { status: InvoiceStatus; _count: number; _sum: { totalAmount: string | number } }[];
+  byCategory: { category: InvoiceCategory; _count: number; _sum: { totalAmount: string | number } }[];
 }
 
 // ─── Media ────────────────────────────────────────────────────────────────────

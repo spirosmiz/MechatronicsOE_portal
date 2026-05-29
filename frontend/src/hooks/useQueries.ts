@@ -2,8 +2,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   customersApi, machinesApi, inventoryApi, projectsApi,
   serviceReportsApi, usersApi, offersApi, mediaApi,
+  suppliersApi, laborRatesApi, invoicesApi,
 } from '../lib/api';
-import { Customer, Machine, InventoryItem, Project, ServiceReport, User, DashboardStats, Offer, OfferStats, MediaFile } from '../types';
+import {
+  Customer, Machine, InventoryItem, Project, ServiceReport, User, DashboardStats,
+  Offer, OfferStats, MediaFile, Supplier, LaborRate, Invoice, InvoiceStats, SupplierQuote,
+} from '../types';
 
 // ─── Keys ───────────────────────────────────────────────────────────────────
 export const KEYS = {
@@ -23,6 +27,14 @@ export const KEYS = {
   offer: (id: string) => ['offers', id] as const,
   offerStats: ['offer-stats'] as const,
   media: (entityType: string, entityId: string) => ['media', entityType, entityId] as const,
+  inventoryQuotes: (id: string) => ['inventory', id, 'quotes'] as const,
+  suppliers: ['suppliers'] as const,
+  supplier: (id: string) => ['suppliers', id] as const,
+  laborRates: ['labor-rates'] as const,
+  laborRatesCurrent: ['labor-rates', 'current'] as const,
+  invoices: (params?: object) => ['invoices', params ?? {}] as const,
+  invoice: (id: string) => ['invoices', 'detail', id] as const,
+  invoiceStats: ['invoice-stats'] as const,
 };
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -162,6 +174,49 @@ export function useDeleteInventoryItem() {
   });
 }
 
+export function useInventoryQuotes(inventoryId: string) {
+  return useQuery<SupplierQuote[]>({
+    queryKey: KEYS.inventoryQuotes(inventoryId),
+    queryFn: () => inventoryApi.listQuotes(inventoryId).then((r) => r.data),
+    enabled: !!inventoryId,
+  });
+}
+
+export function useCreateInventoryQuote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ inventoryId, data }: { inventoryId: string; data: Record<string, unknown> }) =>
+      inventoryApi.createQuote(inventoryId, data),
+    onSuccess: (_data, { inventoryId }) => {
+      qc.invalidateQueries({ queryKey: KEYS.inventoryQuotes(inventoryId) });
+      qc.invalidateQueries({ queryKey: KEYS.inventoryItem(inventoryId) });
+    },
+  });
+}
+
+export function useUpdateInventoryQuote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ inventoryId, quoteId, data }: { inventoryId: string; quoteId: string; data: Record<string, unknown> }) =>
+      inventoryApi.updateQuote(inventoryId, quoteId, data),
+    onSuccess: (_data, { inventoryId }) => {
+      qc.invalidateQueries({ queryKey: KEYS.inventoryQuotes(inventoryId) });
+    },
+  });
+}
+
+export function useDeleteInventoryQuote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ inventoryId, quoteId }: { inventoryId: string; quoteId: string }) =>
+      inventoryApi.deleteQuote(inventoryId, quoteId),
+    onSuccess: (_data, { inventoryId }) => {
+      qc.invalidateQueries({ queryKey: KEYS.inventoryQuotes(inventoryId) });
+      qc.invalidateQueries({ queryKey: KEYS.inventoryItem(inventoryId) });
+    },
+  });
+}
+
 export function useSetupInventoryDrive() {
   const qc = useQueryClient();
   return useMutation({
@@ -230,6 +285,17 @@ export function useDeleteProject() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['projects'] });
       qc.invalidateQueries({ queryKey: KEYS.dashboardStats });
+    },
+  });
+}
+
+export function useGenerateInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (projectId: string) => projectsApi.generateInvoice(projectId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: KEYS.invoiceStats });
     },
   });
 }
@@ -404,6 +470,183 @@ export function useDeleteMedia() {
       mediaApi.delete(id),
     onSuccess: (_data, { entityType, entityId }) => {
       qc.invalidateQueries({ queryKey: KEYS.media(entityType, entityId) });
+    },
+  });
+}
+
+// ─── Suppliers ────────────────────────────────────────────────────────────────
+export function useSuppliers() {
+  return useQuery<Supplier[]>({
+    queryKey: KEYS.suppliers,
+    queryFn: () => suppliersApi.list().then((r) => r.data),
+  });
+}
+
+export function useSupplier(id: string) {
+  return useQuery<Supplier>({
+    queryKey: KEYS.supplier(id),
+    queryFn: () => suppliersApi.get(id).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
+export function useCreateSupplier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => suppliersApi.create(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.suppliers }),
+  });
+}
+
+export function useUpdateSupplier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      suppliersApi.update(id, data),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: KEYS.suppliers });
+      qc.invalidateQueries({ queryKey: KEYS.supplier(id) });
+    },
+  });
+}
+
+export function useDeleteSupplier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => suppliersApi.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.suppliers }),
+  });
+}
+
+// ─── Labor Rates ──────────────────────────────────────────────────────────────
+export function useLaborRates() {
+  return useQuery<LaborRate[]>({
+    queryKey: KEYS.laborRates,
+    queryFn: () => laborRatesApi.list().then((r) => r.data),
+  });
+}
+
+export function useCurrentLaborRates() {
+  return useQuery<LaborRate[]>({
+    queryKey: KEYS.laborRatesCurrent,
+    queryFn: () => laborRatesApi.current().then((r) => r.data),
+  });
+}
+
+export function useCreateLaborRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => laborRatesApi.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.laborRates });
+      qc.invalidateQueries({ queryKey: KEYS.laborRatesCurrent });
+    },
+  });
+}
+
+export function useDeleteLaborRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => laborRatesApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.laborRates });
+      qc.invalidateQueries({ queryKey: KEYS.laborRatesCurrent });
+    },
+  });
+}
+
+// ─── Invoices ─────────────────────────────────────────────────────────────────
+export function useInvoices(params?: Record<string, string>) {
+  return useQuery<Invoice[]>({
+    queryKey: KEYS.invoices(params),
+    queryFn: () => invoicesApi.list(params).then((r) => r.data),
+  });
+}
+
+export function useInvoice(id: string) {
+  return useQuery<Invoice>({
+    queryKey: KEYS.invoice(id),
+    queryFn: () => invoicesApi.get(id).then((r) => r.data),
+    enabled: !!id,
+  });
+}
+
+export function useInvoiceStats() {
+  return useQuery<InvoiceStats>({
+    queryKey: KEYS.invoiceStats,
+    queryFn: () => invoicesApi.stats().then((r) => r.data),
+  });
+}
+
+export function useCreateInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => invoicesApi.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: KEYS.invoiceStats });
+    },
+  });
+}
+
+export function useUpdateInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      invoicesApi.update(id, data),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: KEYS.invoice(id) });
+    },
+  });
+}
+
+export function useUpdateInvoiceStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      invoicesApi.updateStatus(id, status),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: KEYS.invoice(id) });
+      qc.invalidateQueries({ queryKey: KEYS.invoiceStats });
+    },
+  });
+}
+
+export function useDeleteInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => invoicesApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: KEYS.invoiceStats });
+    },
+  });
+}
+
+export function useAddPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      invoicesApi.addPayment(id, data),
+    onSuccess: (_data, { id }) => {
+      qc.invalidateQueries({ queryKey: KEYS.invoice(id) });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: KEYS.invoiceStats });
+    },
+  });
+}
+
+export function useDeletePayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ invoiceId, paymentId }: { invoiceId: string; paymentId: string }) =>
+      invoicesApi.deletePayment(invoiceId, paymentId),
+    onSuccess: (_data, { invoiceId }) => {
+      qc.invalidateQueries({ queryKey: KEYS.invoice(invoiceId) });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: KEYS.invoiceStats });
     },
   });
 }

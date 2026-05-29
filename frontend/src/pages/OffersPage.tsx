@@ -341,11 +341,22 @@ export function OffersPage() {
   async function handleStatusChange(id: string, status: string) {
     try {
       const res = await statusMut.mutateAsync({ id, status });
-      const created: number = (res as { data?: { projectsCreated?: number } })?.data?.projectsCreated ?? 0;
-      toast({
-        title: `Status updated to ${OFFER_STATUS_LABELS[status]}`,
-        description: created > 0 ? `${created} project${created > 1 ? 's' : ''} created automatically` : undefined,
-      });
+      const data = (res as { data?: { projectsCreated?: number; creationErrors?: string[] } })?.data;
+      const created = data?.projectsCreated ?? 0;
+      const errors  = data?.creationErrors  ?? [];
+
+      if (errors.length > 0) {
+        toast({
+          title: 'Status updated but project creation failed',
+          description: errors[0],
+          variant: 'destructive',
+        });
+      } else {
+        toast({
+          title: `Status updated to ${OFFER_STATUS_LABELS[status]}`,
+          description: created > 0 ? `${created} project${created > 1 ? 's' : ''} created automatically` : undefined,
+        });
+      }
     } catch {
       toast({ title: 'Failed to update status', variant: 'destructive' });
     }

@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, Building2, Cpu, Package, FolderOpen,
   FileText, LogOut, Menu, X, Settings, FileSignature,
+  Receipt, Building, Clock,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
@@ -16,9 +17,12 @@ const navItems = [
   { to: '/projects', icon: FolderOpen, label: 'Projects' },
   { to: '/service-reports', icon: FileText, label: 'Service Reports' },
   { to: '/offers', icon: FileSignature, label: 'Offers' },
+  { to: '/invoices', icon: Receipt, label: 'Invoices' },
 ];
 
 const adminNavItems = [
+  { to: '/suppliers', icon: Building, label: 'Suppliers' },
+  { to: '/labor-rates', icon: Clock, label: 'Labor Rates' },
   { to: '/users', icon: Users, label: 'Users' },
 ];
 

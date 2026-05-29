@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Edit, Trash2, Plus, FileText, Package, Clock,
-  CheckCircle2, Building2, Cpu, User, Calendar, FileSignature,
+  CheckCircle2, Building2, Cpu, User, Calendar, FileSignature, Receipt, Paperclip,
 } from 'lucide-react';
 import {
   useProject, useUpdateProject, useUpdateProjectStatus, useDeleteProject,
-  useCreateServiceReport, useInventory,
+  useCreateServiceReport, useInventory, useGenerateInvoice, useInvoices, useCurrentLaborRates,
 } from '@/hooks/useQueries';
 import { projectsApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -20,10 +20,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { MediaGalleryDialog } from '@/components/ui/MediaGallery';
 import {
   formatCurrency, formatDateTime, formatDate, STATUS_COLORS, STATUS_LABELS, JOB_TYPE_LABELS,
+  INVOICE_STATUS_COLORS, INVOICE_STATUS_LABELS,
 } from '@/lib/utils';
-import { StatusType, JobType, InventoryItem } from '@/types';
+import { StatusType, JobType, InventoryItem, ServiceReport } from '@/types';
 
 const STATUSES: StatusType[] = ['draft', 'pending_approval', 'approved', 'in_progress', 'completed', 'cancelled'];
 const JOB_TYPES: JobType[] = ['maintenance', 'electrical_upgrade', 'retrofit', 'reconstruction'];
@@ -33,10 +35,13 @@ export function ProjectDetailPage() {
   const navigate = useNavigate();
   const { data: project, isLoading } = useProject(id!);
   const { data: inventoryItems = [] } = useInventory();
-  const updateMut = useUpdateProject();
-  const statusMut = useUpdateProjectStatus();
-  const deleteMut = useDeleteProject();
-  const reportMut = useCreateServiceReport();
+  const updateMut      = useUpdateProject();
+  const statusMut      = useUpdateProjectStatus();
+  const deleteMut      = useDeleteProject();
+  const reportMut      = useCreateServiceReport();
+  const generateMut    = useGenerateInvoice();
+  const { data: projectInvoices = [] } = useInvoices(id ? { projectId: id } : undefined);
+  const { data: currentRates = [] }    = useCurrentLaborRates();
   const qc = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -46,8 +51,11 @@ export function ProjectDetailPage() {
   const [reportOpen, setReportOpen] = useState(false);
   const [matOpen, setMatOpen] = useState(false);
   const [editForm, setEditForm] = useState<Record<string, string>>({});
-  const [reportForm, setReportForm] = useState({ workPerformed: '', hoursLogged: '', digitalSignature: '' });
-  const [matForm, setMatForm] = useState({ inventoryId: '', qty: '1' });
+  const [reportForm, setReportForm] = useState({ workPerformed: '', hoursLogged: '', workType: 'SERVICE_ENGINEER', digitalSignature: '' });
+  const [matForm, setMatForm] = useState({ inventoryId: '', qty: '1', description: '', unitPrice: '', partNumber: '', brand: '', stockQty: '0' });
+  const [reportMediaTarget, setReportMediaTarget] = useState<ServiceReport | null>(null);
+  const [matMode, setMatMode]         = useState<'inventory' | 'custom'>('inventory');
+  const [saveToInventory, setSaveToInventory] = useState(false);
 
   if (isLoading) {
     return (
@@ -121,10 +129,11 @@ export function ProjectDetailPage() {
         projectId: id!,
         workPerformed: reportForm.workPerformed,
         hoursLogged: parseFloat(reportForm.hoursLogged),
+        workType: reportForm.workType || undefined,
         digitalSignature: reportForm.digitalSignature || undefined,
       });
       toast({ title: 'Service report submitted' });
-      setReportForm({ workPerformed: '', hoursLogged: '', digitalSignature: '' });
+      setReportForm({ workPerformed: '', hoursLogged: '', workType: 'SERVICE_ENGINEER', digitalSignature: '' });
       setReportOpen(false);
     } catch {
       toast({ title: 'Failed to submit report', variant: 'destructive' });
@@ -132,18 +141,35 @@ export function ProjectDetailPage() {
   }
 
   async function handleAddMaterial() {
-    const inv = inventoryItems.find((i) => i.id === matForm.inventoryId);
-    if (!inv) return;
     try {
-      await projectsApi.addMaterial(id!, {
-        inventoryId: inv.id,
-        quantityRequired: parseInt(matForm.qty),
-        unitCostAtQuote: Number(inv.unitCost),
-        unitPriceAtQuote: Number(inv.unitPrice),
-      });
+      if (matMode === 'inventory') {
+        const inv = inventoryItems.find((i) => i.id === matForm.inventoryId);
+        if (!inv) { toast({ title: 'Select a part from inventory', variant: 'destructive' }); return; }
+        await projectsApi.addMaterial(id!, {
+          inventoryId:      inv.id,
+          quantityRequired: parseInt(matForm.qty),
+          unitCostAtQuote:  Number(inv.unitCost),
+          unitPriceAtQuote: Number(inv.unitPrice),
+        });
+      } else {
+        if (!matForm.description.trim()) { toast({ title: 'Description is required', variant: 'destructive' }); return; }
+        if (!matForm.unitPrice || Number(matForm.unitPrice) <= 0) { toast({ title: 'Enter a valid unit price', variant: 'destructive' }); return; }
+        await projectsApi.addMaterial(id!, {
+          description:      matForm.description.trim(),
+          quantityRequired: parseInt(matForm.qty) || 1,
+          unitCostAtQuote:  Number(matForm.unitPrice),
+          unitPriceAtQuote: Number(matForm.unitPrice),
+          saveToInventory,
+          partNumber:  matForm.partNumber.trim()  || undefined,
+          brand:       matForm.brand.trim()       || undefined,
+          stockQuantity: parseInt(matForm.stockQty) || 0,
+        });
+        if (saveToInventory) qc.invalidateQueries({ queryKey: KEYS.inventory });
+      }
       qc.invalidateQueries({ queryKey: KEYS.project(id!) });
-      toast({ title: 'Material added' });
-      setMatForm({ inventoryId: '', qty: '1' });
+      toast({ title: saveToInventory && matMode === 'custom' ? 'Material added and saved to Inventory' : 'Material added' });
+      setMatForm({ inventoryId: '', qty: '1', description: '', unitPrice: '', partNumber: '', brand: '', stockQty: '0' });
+      setSaveToInventory(false);
       setMatOpen(false);
     } catch {
       toast({ title: 'Failed to add material', variant: 'destructive' });
@@ -158,6 +184,19 @@ export function ProjectDetailPage() {
       toast({ title: 'Material removed' });
     } catch {
       toast({ title: 'Failed to remove material', variant: 'destructive' });
+    }
+  }
+
+  async function handleGenerateInvoice() {
+    if (!confirm('Generate a draft invoice from all service reports and materials on this project?')) return;
+    try {
+      const res = await generateMut.mutateAsync(id!);
+      const invoice = (res as { data?: { id?: string } }).data;
+      toast({ title: 'Draft invoice created — review it before issuing' });
+      if (invoice?.id) navigate(`/invoices/${invoice.id}`);
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to generate invoice';
+      toast({ title: msg, variant: 'destructive' });
     }
   }
 
@@ -195,7 +234,18 @@ export function ProjectDetailPage() {
           </p>
         </div>
         {canEdit && (
-          <div className="flex gap-2 flex-shrink-0">
+          <div className="flex gap-2 flex-shrink-0 flex-wrap">
+            {project.status === 'completed' && (
+              <Button
+                variant="outline"
+                className="border-green-300 text-green-700 hover:bg-green-50"
+                onClick={handleGenerateInvoice}
+                disabled={generateMut.isPending}
+              >
+                <Receipt className="w-4 h-4 mr-2" />
+                {generateMut.isPending ? 'Generating…' : 'Generate Invoice'}
+              </Button>
+            )}
             <Button variant="outline" onClick={openEdit}><Edit className="w-4 h-4 mr-2" />Edit</Button>
             {user?.role === 'admin' && (
               <Button variant="destructive" onClick={handleDelete}><Trash2 className="w-4 h-4 mr-2" />Delete</Button>
@@ -249,9 +299,61 @@ export function ProjectDetailPage() {
           <CardContent className="p-4 space-y-2">
             <p className="text-xs text-muted-foreground">Quoted Total</p>
             <p className="text-2xl font-bold text-blue-600">{formatCurrency(project.quotedTotalPrice)}</p>
-            <p className="text-xs text-muted-foreground">
-              Materials: {formatCurrency(materialsTotal)} · Labor est.: not calculated
-            </p>
+            {(() => {
+              // Try to get per-type breakdown from the linked offer's items
+              const offerItems = project.offer?.items ?? [];
+
+              const designItem  = offerItems.find((i) => i.description.startsWith('Design Engineering'));
+              const serviceItem = offerItems.find((i) => i.description.startsWith('Service / Installation'));
+
+              const designHours   = designItem  ? Number(designItem.quantity)  : 0;
+              const designRate    = designItem  ? Number(designItem.unitPrice)  : 0;
+              const serviceHours  = serviceItem ? Number(serviceItem.quantity)  : 0;
+              const serviceRate   = serviceItem ? Number(serviceItem.unitPrice) : 0;
+
+              const hasOfferBreakdown = designHours > 0 || serviceHours > 0;
+
+              if (hasOfferBreakdown) {
+                const designTotal  = designHours  * designRate;
+                const serviceTotal = serviceHours * serviceRate;
+                const laborTotal   = designTotal + serviceTotal;
+                return (
+                  <div className="text-xs text-muted-foreground space-y-0.5 mt-1">
+                    <p>Materials: {formatCurrency(materialsTotal)}</p>
+                    <p>
+                      Labor est.: <span className="font-medium text-foreground">{formatCurrency(laborTotal)}</span>
+                    </p>
+                    {designHours > 0 && (
+                      <p className="pl-3 opacity-75">
+                        Design: {designHours.toFixed(1)} h × {formatCurrency(designRate)}/h = {formatCurrency(designTotal)}
+                      </p>
+                    )}
+                    {serviceHours > 0 && (
+                      <p className="pl-3 opacity-75">
+                        Service: {serviceHours.toFixed(1)} h × {formatCurrency(serviceRate)}/h = {formatCurrency(serviceTotal)}
+                      </p>
+                    )}
+                  </div>
+                );
+              }
+
+              // Fallback: no offer items — use estimatedLaborHours × current rate
+              const svcRate  = currentRates.find((r) => r.role === 'SERVICE_ENGINEER');
+              const dsnRate  = currentRates.find((r) => r.role === 'DESIGN_ENGINEER');
+              const fallback = svcRate ?? dsnRate;
+              const laborEst = fallback
+                ? Number(project.estimatedLaborHours) * Number(fallback.ratePerHour)
+                : null;
+              return (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Materials: {formatCurrency(materialsTotal)}
+                  {' · '}
+                  Labor est.: {laborEst !== null
+                    ? <>{formatCurrency(laborEst)} <span className="opacity-60">({Number(project.estimatedLaborHours).toFixed(1)} h × {formatCurrency(fallback!.ratePerHour)}/h)</span></>
+                    : <span className="italic">no labor rate set</span>}
+                </p>
+              );
+            })()}
           </CardContent>
         </Card>
 
@@ -331,8 +433,13 @@ export function ProjectDetailPage() {
               {project.projectMaterials.map((m) => (
                 <div key={m.id} className="flex items-center justify-between px-6 py-3">
                   <div>
-                    <p className="text-sm font-medium">{m.inventory?.name ?? '—'}</p>
-                    <p className="text-xs text-muted-foreground font-mono">{m.inventory?.partNumber}</p>
+                    <p className="text-sm font-medium">{m.description ?? m.inventory?.name ?? '—'}</p>
+                    {m.inventory?.partNumber && (
+                      <p className="text-xs text-muted-foreground font-mono">{m.inventory.partNumber}</p>
+                    )}
+                    {!m.inventoryId && (
+                      <p className="text-xs text-muted-foreground">Custom part</p>
+                    )}
                   </div>
                   <div className="flex items-center gap-6 text-sm">
                     <span className="text-muted-foreground">× {m.quantityRequired}</span>
@@ -373,23 +480,86 @@ export function ProjectDetailPage() {
               {project.serviceReports.map((r) => (
                 <div key={r.id} className="px-6 py-4">
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <div className="flex items-center flex-wrap gap-2 text-sm text-muted-foreground">
                       <User className="w-3.5 h-3.5" />
                       <span className="font-medium text-foreground">{r.technician?.name ?? 'Unknown'}</span>
                       <span>·</span>
                       <Clock className="w-3.5 h-3.5" />
                       <span className="font-medium text-foreground">{Number(r.hoursLogged).toFixed(1)}h</span>
+                      {r.workType && (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          r.workType === 'DESIGN_ENGINEER'  ? 'bg-purple-100 text-purple-700' :
+                          r.workType === 'PROJECT_MANAGER'  ? 'bg-green-100 text-green-700' :
+                                                              'bg-blue-100 text-blue-700'
+                        }`}>
+                          {r.workType === 'DESIGN_ENGINEER' ? 'Design' :
+                           r.workType === 'PROJECT_MANAGER' ? 'Management' : 'Service'}
+                        </span>
+                      )}
                       <span>·</span>
                       <Calendar className="w-3.5 h-3.5" />
                       <span>{formatDateTime(r.submittedAt)}</span>
                     </div>
-                    {r.digitalSignature && (
-                      <span className="flex items-center gap-1 text-xs text-green-600">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Signed
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {r.digitalSignature && (
+                        <span className="flex items-center gap-1 text-xs text-green-600">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Signed
+                        </span>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-blue-600"
+                        title="Attachments (photos, docs, videos)"
+                        onClick={() => setReportMediaTarget(r)}
+                      >
+                        <Paperclip className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </div>
                   <p className="text-sm text-muted-foreground whitespace-pre-wrap">{r.workPerformed}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Invoices */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Receipt className="w-4 h-4" /> Invoices
+            <span className="text-sm font-normal text-muted-foreground">({projectInvoices.length})</span>
+          </CardTitle>
+          {canEdit && project.status === 'completed' && (
+            <Button size="sm" variant="outline" className="text-green-700 border-green-300 hover:bg-green-50" onClick={handleGenerateInvoice} disabled={generateMut.isPending}>
+              <Plus className="w-3.5 h-3.5 mr-1" /> {generateMut.isPending ? 'Generating…' : 'Generate Invoice'}
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="p-0">
+          {projectInvoices.length === 0 ? (
+            <p className="text-center py-8 text-muted-foreground text-sm">
+              {project.status === 'completed'
+                ? 'No invoices yet — click "Generate Invoice" to create one from this project\'s work.'
+                : 'Invoices can be generated once the project is marked as Completed.'}
+            </p>
+          ) : (
+            <div className="divide-y">
+              {projectInvoices.map((inv) => (
+                <div key={inv.id} className="flex items-center justify-between px-6 py-3">
+                  <div>
+                    <p className="text-sm font-mono font-medium">{inv.invoiceNumber}</p>
+                    <p className="text-xs text-muted-foreground">{inv.issueDate ? formatDate(inv.issueDate) : 'No issue date'}</p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <span className="font-medium text-sm">{formatCurrency(inv.totalAmount)}</span>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${INVOICE_STATUS_COLORS[inv.status]}`}>
+                      {INVOICE_STATUS_LABELS[inv.status]}
+                    </span>
+                    <Link to={`/invoices/${inv.id}`} className="text-xs text-blue-600 hover:underline">View →</Link>
+                  </div>
                 </div>
               ))}
             </div>
@@ -456,6 +626,18 @@ export function ProjectDetailPage() {
           <DialogHeader><DialogTitle>Log Work</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
+              <Label>Type of Work *</Label>
+              <Select value={reportForm.workType} onValueChange={(v) => setReportForm({ ...reportForm, workType: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="SERVICE_ENGINEER">Service / Installation</SelectItem>
+                  <SelectItem value="DESIGN_ENGINEER">Design / Engineering</SelectItem>
+                  <SelectItem value="PROJECT_MANAGER">Project Management</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Determines which labor rate is applied when generating an invoice.</p>
+            </div>
+            <div className="space-y-2">
               <Label>Work Performed *</Label>
               <Textarea rows={4} value={reportForm.workPerformed} onChange={(e) => setReportForm({ ...reportForm, workPerformed: e.target.value })} placeholder="Describe the work completed…" />
             </div>
@@ -479,30 +661,168 @@ export function ProjectDetailPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Report Attachments Dialog */}
+      {reportMediaTarget && (
+        <MediaGalleryDialog
+          open={!!reportMediaTarget}
+          onClose={() => setReportMediaTarget(null)}
+          title={`Report — ${reportMediaTarget.technician?.name ?? 'Technician'}`}
+          description={`${formatDateTime(reportMediaTarget.submittedAt)} · Files saved under Customer / Service Reports in Google Drive`}
+          entityType="service_report"
+          entityId={reportMediaTarget.id}
+        />
+      )}
+
       {/* Add Material Dialog */}
-      <Dialog open={matOpen} onOpenChange={setMatOpen}>
+      <Dialog open={matOpen} onOpenChange={(v) => { setMatOpen(v); if (!v) { setMatMode('inventory'); setSaveToInventory(false); setMatForm({ inventoryId: '', qty: '1', description: '', unitPrice: '', partNumber: '', brand: '', stockQty: '0' }); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Add Material</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Part</Label>
-              <Select value={matForm.inventoryId} onValueChange={(v) => setMatForm({ ...matForm, inventoryId: v })}>
-                <SelectTrigger><SelectValue placeholder="Select part" /></SelectTrigger>
-                <SelectContent>
-                  {(inventoryItems as InventoryItem[]).map((i) => (
-                    <SelectItem key={i.id} value={i.id}>{i.partNumber} – {i.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+
+            {/* Mode toggle */}
+            <div className="flex rounded-lg border overflow-hidden text-sm">
+              <button
+                type="button"
+                onClick={() => setMatMode('inventory')}
+                className={`flex-1 px-3 py-2 font-medium transition-colors ${matMode === 'inventory' ? 'bg-slate-900 text-white' : 'bg-white text-muted-foreground hover:bg-gray-50'}`}
+              >
+                From Inventory
+              </button>
+              <button
+                type="button"
+                onClick={() => setMatMode('custom')}
+                className={`flex-1 px-3 py-2 font-medium border-l transition-colors ${matMode === 'custom' ? 'bg-slate-900 text-white' : 'bg-white text-muted-foreground hover:bg-gray-50'}`}
+              >
+                Custom Part
+              </button>
             </div>
-            <div className="space-y-2">
-              <Label>Quantity</Label>
-              <Input type="number" min="1" value={matForm.qty} onChange={(e) => setMatForm({ ...matForm, qty: e.target.value })} />
-            </div>
+
+            {matMode === 'inventory' ? (
+              <>
+                <div className="space-y-2">
+                  <Label>Part *</Label>
+                  <Select value={matForm.inventoryId} onValueChange={(v) => setMatForm({ ...matForm, inventoryId: v })}>
+                    <SelectTrigger><SelectValue placeholder="Select part" /></SelectTrigger>
+                    <SelectContent>
+                      {(inventoryItems as InventoryItem[]).map((i) => (
+                        <SelectItem key={i.id} value={i.id}>{i.partNumber} – {i.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {matForm.inventoryId && (() => {
+                    const inv = inventoryItems.find((i) => i.id === matForm.inventoryId);
+                    return inv ? (
+                      <p className="text-xs text-muted-foreground">
+                        Unit price: {formatCurrency(inv.unitPrice)} · Stock: {inv.stockQuantity}
+                      </p>
+                    ) : null;
+                  })()}
+                </div>
+                <div className="space-y-2">
+                  <Label>Quantity</Label>
+                  <Input type="number" min="1" value={matForm.qty} onChange={(e) => setMatForm({ ...matForm, qty: e.target.value })} />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label>Description *</Label>
+                  <Input
+                    placeholder="e.g. Custom bracket, relay, cable…"
+                    value={matForm.description}
+                    onChange={(e) => setMatForm({ ...matForm, description: e.target.value })}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Quantity</Label>
+                    <Input type="number" min="1" value={matForm.qty} onChange={(e) => setMatForm({ ...matForm, qty: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Unit Price (€) *</Label>
+                    <Input
+                      type="number" min="0" step="0.01" placeholder="0.00"
+                      value={matForm.unitPrice}
+                      onChange={(e) => setMatForm({ ...matForm, unitPrice: e.target.value })}
+                    />
+                  </div>
+                </div>
+                {matForm.qty && matForm.unitPrice && Number(matForm.unitPrice) > 0 && (
+                  <p className="text-sm font-medium text-right">
+                    Line total: {formatCurrency(parseInt(matForm.qty || '1') * Number(matForm.unitPrice))}
+                  </p>
+                )}
+
+                {/* Save to Inventory toggle */}
+                <div className="border-t pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !saveToInventory;
+                      setSaveToInventory(next);
+                      if (next && !matForm.partNumber && matForm.description.trim()) {
+                        const slug = matForm.description.trim()
+                          .toUpperCase()
+                          .replace(/[^A-Z0-9]+/g, '-')
+                          .replace(/^-+|-+$/g, '')
+                          .slice(0, 40);
+                        setMatForm((f) => ({ ...f, partNumber: slug }));
+                      }
+                    }}
+                    className={`flex items-center gap-2.5 text-sm font-medium transition-colors ${saveToInventory ? 'text-blue-700' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    <div className={`w-9 h-5 rounded-full transition-colors flex items-center px-0.5 flex-shrink-0 ${saveToInventory ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                      <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${saveToInventory ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </div>
+                    Also add to Inventory
+                  </button>
+                  <p className="text-xs text-muted-foreground mt-1 ml-11">
+                    Creates a catalogue entry so this part can be reused in future projects.
+                  </p>
+                </div>
+
+                {/* Extra inventory fields (shown when toggled on) */}
+                {saveToInventory && (
+                  <div className="rounded-lg border bg-blue-50/50 p-3 space-y-3">
+                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Inventory Details (optional)</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Part Number</Label>
+                        <Input
+                          className="h-8 text-sm"
+                          placeholder="Auto-generated if blank"
+                          value={matForm.partNumber}
+                          onChange={(e) => setMatForm({ ...matForm, partNumber: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">Brand</Label>
+                        <Input
+                          className="h-8 text-sm"
+                          placeholder="e.g. Siemens"
+                          value={matForm.brand}
+                          onChange={(e) => setMatForm({ ...matForm, brand: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Initial Stock Quantity</Label>
+                      <Input
+                        className="h-8 text-sm w-32"
+                        type="number" min="0"
+                        value={matForm.stockQty}
+                        onChange={(e) => setMatForm({ ...matForm, stockQty: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground">How many units are already in stock (can be 0).</p>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setMatOpen(false)}>Cancel</Button>
-            <Button onClick={handleAddMaterial} disabled={!matForm.inventoryId}>Add</Button>
+            <Button onClick={handleAddMaterial}>Add</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

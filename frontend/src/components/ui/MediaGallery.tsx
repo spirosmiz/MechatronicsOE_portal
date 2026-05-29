@@ -8,7 +8,7 @@ import { MediaFile } from '@/types';
 import { formatDate } from '@/lib/utils';
 
 interface Props {
-  entityType: 'machine' | 'customer' | 'inventory';
+  entityType: 'machine' | 'customer' | 'inventory' | 'service_report';
   entityId: string;
 }
 
@@ -164,17 +164,19 @@ interface GalleryDialogProps extends Props {
   open: boolean;
   onClose: () => void;
   title: string;
+  description?: string;
 }
 
-export function MediaGalleryDialog({ open, onClose, title, entityType, entityId }: GalleryDialogProps) {
+export function MediaGalleryDialog({ open, onClose, title, description, entityType, entityId }: GalleryDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Image className="w-4 h-4" />
-            Media — {title}
+            Attachments — {title}
           </DialogTitle>
+          {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
         </DialogHeader>
         <MediaGallery entityType={entityType} entityId={entityId} />
         <div className="pt-2">
