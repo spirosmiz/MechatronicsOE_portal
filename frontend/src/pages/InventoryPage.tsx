@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus, Search, Package, Edit, Trash2, AlertTriangle, ShieldCheck,
-  Images, FolderOpen, FolderPlus, FileText, ExternalLink, Tag,
+  Images, FolderOpen, FolderPlus, ExternalLink, Tag,
 } from 'lucide-react';
 import {
   useInventory, useCreateInventoryItem, useUpdateInventoryItem, useDeleteInventoryItem,

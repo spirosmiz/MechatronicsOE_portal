@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { UserRole, LaborRoleType } from '../lib/enums';
 import prisma from '../lib/prisma';
@@ -43,7 +43,7 @@ router.post(
     body('ratePerHour').isFloat({ min: 0 }),
     body('effectiveFrom').isISO8601(),
   ],
-  async (req, res: Response): Promise<void> => {
+  async (req: Request, res: Response): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
 

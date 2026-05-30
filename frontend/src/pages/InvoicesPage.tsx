@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Plus, Search, Receipt, TrendingUp, TrendingDown, Clock, AlertCircle,
-  Trash2, Eye, ChevronDown,
+  Plus, Search, Receipt, TrendingUp, TrendingDown, Clock,
+  Trash2, Eye, ChevronDown, Pencil,
 } from 'lucide-react';
 import {
   useInvoices, useInvoiceStats, useCreateInvoice, useUpdateInvoice,
@@ -18,7 +18,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Invoice, InvoiceDirection, InvoiceCategory, InvoiceStatus } from '@/types';
+import { Invoice, InvoiceDirection, InvoiceCategory } from '@/types';
 import {
   formatCurrency, formatDate,
   INVOICE_STATUS_COLORS, INVOICE_STATUS_LABELS,
@@ -384,9 +384,14 @@ export function InvoicesPage() {
                         <Eye className="w-3.5 h-3.5" />
                       </Button>
                       {canEdit && inv.status === 'DRAFT' && (
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(inv)}>
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
+                        <>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(inv)}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(inv)}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </>
                       )}
                     </div>
                   </td>

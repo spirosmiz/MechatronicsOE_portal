@@ -13,7 +13,8 @@
     "prisma:seed": "ts-node src/prisma/seed.ts",
     "prisma:studio": "prisma studio",
     "drive:authorize": "ts-node scripts/authorize-drive.ts",
-    "add-user": "ts-node scripts/add-user.ts"
+    "add-user": "ts-node scripts/add-user.ts",
+    "backup": "ts-node scripts/backup-db.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.15.0",

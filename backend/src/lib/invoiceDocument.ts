@@ -115,7 +115,7 @@ export async function generateInvoicePdf(inv: InvoiceDocumentData): Promise<Buff
         ('address' in party && party.address)     ? party.address             : null,
       ];
       for (const line of lines) {
-        if (line) { doc.text(line, M, cy, { width: boxX - M - 15 }); cy += 12; }
+        if (line) { doc.text(line as string, M, cy, { width: boxX - M - 15 }); cy += 12; }
       }
     }
     doc.fillColor('#000000');

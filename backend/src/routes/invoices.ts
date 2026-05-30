@@ -260,7 +260,7 @@ router.patch(
   '/:id/status',
   requireRole(UserRole.admin, UserRole.project_manager),
   [body('status').isIn(Object.values(InvoiceStatus))],
-  async (req, res: Response): Promise<void> => {
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
 
@@ -290,10 +290,10 @@ router.get('/:id/pdf', async (req, res: Response): Promise<void> => {
       invoiceNumber: invoice.invoiceNumber,
       issueDate:     invoice.issueDate,
       dueDate:       invoice.dueDate,
-      subtotal:      invoice.subtotal,
-      taxRate:       invoice.taxRate,
-      taxAmount:     invoice.taxAmount,
-      totalAmount:   invoice.totalAmount,
+      subtotal:      invoice.subtotal.toNumber(),
+      taxRate:       invoice.taxRate.toNumber(),
+      taxAmount:     invoice.taxAmount.toNumber(),
+      totalAmount:   invoice.totalAmount.toNumber(),
       currency:      invoice.currency,
       notes:         invoice.notes,
       customer:      invoice.customer ?? null,
@@ -301,9 +301,9 @@ router.get('/:id/pdf', async (req, res: Response): Promise<void> => {
       project:       invoice.project  ?? null,
       items:         invoice.items.map((it) => ({
         description: it.description,
-        quantity:    it.quantity,
-        unitPrice:   it.unitPrice,
-        lineTotal:   it.lineTotal,
+        quantity:    it.quantity.toNumber(),
+        unitPrice:   it.unitPrice.toNumber(),
+        lineTotal:   it.lineTotal.toNumber(),
       })),
     });
 
@@ -320,7 +320,7 @@ router.get('/:id/pdf', async (req, res: Response): Promise<void> => {
 router.delete('/:id', requireRole(UserRole.admin), async (req, res: Response): Promise<void> => {
   const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, select: { status: true } });
   if (!invoice) { res.status(404).json({ message: 'Invoice not found' }); return; }
-  if (![InvoiceStatus.DRAFT, InvoiceStatus.CANCELLED].includes(invoice.status as InvoiceStatus)) {
+  if (!([InvoiceStatus.DRAFT, InvoiceStatus.CANCELLED] as string[]).includes(invoice.status)) {
     res.status(400).json({ message: 'Only DRAFT or CANCELLED invoices can be deleted' }); return;
   }
   await prisma.invoice.delete({ where: { id: req.params.id } });
