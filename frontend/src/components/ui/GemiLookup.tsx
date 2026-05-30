@@ -91,8 +91,8 @@ export function GemiLookup({ companyName, onSelect }: Props) {
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium truncate">{c.companyName}</span>
                 {c.active
-                  ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" title="Active" />
-                  : <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" title="Inactive" />}
+                  ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" aria-label="Active" />
+                  : <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" aria-label="Inactive" />}
               </div>
               <div className="text-xs text-muted-foreground mt-0.5">
                 ΑΦΜ: <span className="font-mono">{c.vatNumber}</span>
