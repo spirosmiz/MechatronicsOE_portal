@@ -20,6 +20,8 @@ export interface Customer {
   email?: string;
   phone?: string;
   address: string;
+  latitude?: number;
+  longitude?: number;
   createdAt: string;
   driveFolderId?: string;
   driveMediaFolderId?: string;

@@ -68,17 +68,19 @@ router.post(
     body('vatNumber').trim().notEmpty(),
     body('address').trim().notEmpty(),
     body('email').optional({ checkFalsy: true }).isEmail(),
+    body('latitude').optional({ nullable: true }).isFloat({ min: -90, max: 90 }),
+    body('longitude').optional({ nullable: true }).isFloat({ min: -180, max: 180 }),
   ],
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
 
-    const { companyName, vatNumber, contactPerson, email, phone, address } = req.body;
+    const { companyName, vatNumber, contactPerson, email, phone, address, latitude, longitude } = req.body;
     const exists = await prisma.customer.findUnique({ where: { vatNumber } });
     if (exists) { res.status(409).json({ message: 'VAT number already registered' }); return; }
 
     const customer = await prisma.customer.create({
-      data: { companyName, vatNumber, contactPerson, email, phone, address },
+      data: { companyName, vatNumber, contactPerson, email, phone, address, latitude: latitude ?? null, longitude: longitude ?? null },
     });
 
     // Create Drive folder structure in the background (don't block response)
@@ -122,10 +124,10 @@ router.put(
   '/:id',
   requireRole(UserRole.admin, UserRole.project_manager),
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    const { companyName, vatNumber, contactPerson, email, phone, address } = req.body;
+    const { companyName, vatNumber, contactPerson, email, phone, address, latitude, longitude } = req.body;
     const customer = await prisma.customer.update({
       where: { id: req.params.id },
-      data: { companyName, vatNumber, contactPerson, email, phone, address },
+      data: { companyName, vatNumber, contactPerson, email, phone, address, latitude: latitude ?? null, longitude: longitude ?? null },
     });
     res.json(customer);
   }

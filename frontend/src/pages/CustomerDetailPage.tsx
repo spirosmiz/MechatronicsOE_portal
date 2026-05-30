@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { ArrowLeft, Building2, Cpu, FileSignature, FolderOpen, Mail, MapPin, Phone, Edit, Trash2, Images, FolderPlus } from 'lucide-react';
+import { ArrowLeft, Building2, Cpu, FileSignature, FolderOpen, Mail, MapPin, Phone, Edit, Trash2, Images, FolderPlus, Navigation } from 'lucide-react';
+import { LocationPicker, EnrichedCustomer } from '@/components/ui/LocationPicker';
+import { GemiLookup } from '@/components/ui/GemiLookup';
 import { useCustomer, useMachines, useOffers, useProjects, useDeleteCustomer, useUpdateCustomer, useSetupCustomerDrive } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
@@ -58,6 +60,19 @@ export function CustomerDetailPage() {
     if (!customer) return;
     setForm({ ...customer });
     setEditOpen(true);
+  }
+
+  function handleEnrich(data: EnrichedCustomer) {
+    setForm((prev) => ({
+      ...prev,
+      companyName: prev.companyName || data.companyName,
+      phone:       prev.phone       || data.phone,
+      email:       prev.email       || data.email,
+      address:     prev.address     || data.address,
+      vatNumber:   prev.vatNumber   || data.vatNumber,
+      latitude:    prev.latitude    ?? data.latitude,
+      longitude:   prev.longitude   ?? data.longitude,
+    }));
   }
 
   async function handleSave() {
@@ -161,6 +176,19 @@ export function CustomerDetailPage() {
           <div className="flex items-start gap-1.5">
             <MapPin className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
             <span>{customer.address}</span>
+          </div>
+        )}
+        {customer.latitude != null && customer.longitude != null && (
+          <div className="flex items-start gap-1.5">
+            <Navigation className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+            <a
+              href={`https://www.google.com/maps?q=${customer.latitude},${customer.longitude}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-600 hover:text-blue-800 hover:underline"
+            >
+              View on Map
+            </a>
           </div>
         )}
       </div>
@@ -374,7 +402,13 @@ export function CustomerDetailPage() {
               <Input value={form.companyName ?? ''} onChange={(e) => setForm({ ...form, companyName: e.target.value })} />
             </div>
             <div className="space-y-2">
-              <Label>VAT Number *</Label>
+              <div className="flex items-center justify-between">
+                <Label>VAT Number *</Label>
+                <GemiLookup
+                  companyName={form.companyName ?? ''}
+                  onSelect={(c) => setForm({ ...form, vatNumber: c.vatNumber, companyName: form.companyName || c.companyName })}
+                />
+              </div>
               <Input value={form.vatNumber ?? ''} onChange={(e) => setForm({ ...form, vatNumber: e.target.value })} />
             </div>
             <div className="space-y-2">
@@ -393,6 +427,13 @@ export function CustomerDetailPage() {
               <Label>Address *</Label>
               <Textarea rows={2} value={form.address ?? ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
             </div>
+            <LocationPicker
+              latitude={form.latitude}
+              longitude={form.longitude}
+              onChange={(lat, lng) => setForm((prev) => ({ ...prev, latitude: lat, longitude: lng }))}
+              onEnrich={handleEnrich}
+              onAddressFound={(address) => setForm((prev) => ({ ...prev, address: prev.address || address }))}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>

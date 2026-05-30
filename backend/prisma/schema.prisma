@@ -34,6 +34,8 @@ model Customer {
   phone                  String?
   address                String
   createdAt              DateTime @default(now()) @map("created_at")
+  latitude                     Float?
+  longitude                    Float?
   driveFolderId                String?  @map("drive_folder_id")
   driveMediaFolderId           String?  @map("drive_media_folder_id")
   driveOffersFolderId          String?  @map("drive_offers_folder_id")

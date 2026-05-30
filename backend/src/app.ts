@@ -18,7 +18,10 @@ import laborRatesRouter from './routes/laborRates';
 import invoicesRouter from './routes/invoices';
 import { errorHandler } from './middleware/errorHandler';
 import { activityLogger } from './middleware/activityLogger';
+import { authenticate } from './middleware/auth';
 import adminRouter from './routes/admin';
+import enrichRouter from './routes/enrich';
+import gemiRouter from './routes/gemi';
 
 const app = express();
 
@@ -40,8 +43,27 @@ app.use('/api/suppliers', suppliersRouter);
 app.use('/api/labor-rates', laborRatesRouter);
 app.use('/api/invoices', invoicesRouter);
 app.use('/api/admin/activity', adminRouter);
+app.use('/api/enrich-customer', enrichRouter);
+app.use('/api/gemi-lookup', gemiRouter);
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
+// Resolves a maps.app.goo.gl short URL to its full URL so the frontend can extract coordinates.
+// Only accepts Google Maps short URLs to prevent abuse as an open proxy.
+app.get('/api/resolve-maps-url', authenticate, async (req, res) => {
+  const url = req.query.url as string;
+  const allowed = url && (url.startsWith('https://maps.app.goo.gl/') || url.startsWith('https://share.google/'));
+  if (!allowed) {
+    res.status(400).json({ message: 'Only Google Maps short URLs are supported' });
+    return;
+  }
+  try {
+    const response = await fetch(url, { redirect: 'follow' });
+    res.json({ resolvedUrl: response.url });
+  } catch {
+    res.status(502).json({ message: 'Failed to resolve URL' });
+  }
+});
 
 const frontendDist = path.join(__dirname, '../../frontend/dist');
 app.use(express.static(frontendDist));

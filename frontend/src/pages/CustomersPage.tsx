@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Building2, Edit, Trash2, Phone, Mail, MapPin, Images, FolderOpen, FolderPlus, LayoutGrid, List } from 'lucide-react';
+import { Plus, Search, Building2, Edit, Trash2, Phone, Mail, MapPin, Images, FolderOpen, FolderPlus, LayoutGrid, List, Navigation } from 'lucide-react';
+import { LocationPicker, EnrichedCustomer } from '@/components/ui/LocationPicker';
+import { GemiLookup } from '@/components/ui/GemiLookup';
 import { MediaGalleryDialog } from '@/components/ui/MediaGallery';
 import { useCustomers, useCreateCustomer, useUpdateCustomer, useDeleteCustomer, useSetupCustomerDrive } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
@@ -13,7 +15,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Customer } from '@/types';
 
-const EMPTY: Partial<Customer> = { companyName: '', vatNumber: '', address: '', contactPerson: '', email: '', phone: '' };
+const EMPTY: Partial<Customer> = { companyName: '', vatNumber: '', address: '', contactPerson: '', email: '', phone: '', latitude: undefined, longitude: undefined };
 
 export function CustomersPage() {
   const { data: customers = [], isLoading } = useCustomers();
@@ -41,6 +43,19 @@ export function CustomersPage() {
 
   function openCreate() { setEditing(null); setForm(EMPTY); setOpen(true); }
   function openEdit(c: Customer) { setEditing(c); setForm({ ...c }); setOpen(true); }
+
+  function handleEnrich(data: EnrichedCustomer) {
+    setForm((prev) => ({
+      ...prev,
+      companyName: prev.companyName || data.companyName || prev.companyName,
+      phone:       prev.phone       || data.phone,
+      email:       prev.email       || data.email,
+      address:     prev.address     || data.address,
+      vatNumber:   prev.vatNumber   || data.vatNumber,
+      latitude:    prev.latitude    ?? data.latitude,
+      longitude:   prev.longitude   ?? data.longitude,
+    }));
+  }
 
   async function handleSave() {
     try {
@@ -164,6 +179,16 @@ export function CustomersPage() {
                     <MapPin className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                     <span className="line-clamp-2 text-xs">{c.address}</span>
                   </div>
+                  {c.latitude != null && c.longitude != null && (
+                    <a
+                      href={`https://www.google.com/maps?q=${c.latitude},${c.longitude}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 w-fit"
+                    >
+                      <Navigation className="w-3 h-3" /> View on Map
+                    </a>
+                  )}
                 </div>
                 <div className="mt-4 pt-3 border-t space-y-2">
                   <div className="flex gap-4 text-xs">
@@ -255,6 +280,16 @@ export function CustomersPage() {
                   </td>
                   <td className="px-4 py-3 text-muted-foreground text-xs max-w-[180px]">
                     <span className="line-clamp-2">{c.address}</span>
+                    {c.latitude != null && c.longitude != null && (
+                      <a
+                        href={`https://www.google.com/maps?q=${c.latitude},${c.longitude}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 mt-1 text-blue-600 hover:text-blue-800"
+                      >
+                        <Navigation className="w-3 h-3" /> Map
+                      </a>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <Link to={`/customers/${c.id}`} state={{ tab: 'machines' }} className="text-sm font-medium hover:text-blue-600 transition-colors">
@@ -311,7 +346,13 @@ export function CustomersPage() {
               <Input value={form.companyName ?? ''} onChange={(e) => setForm({ ...form, companyName: e.target.value })} />
             </div>
             <div className="space-y-2">
-              <Label>VAT Number *</Label>
+              <div className="flex items-center justify-between">
+                <Label>VAT Number *</Label>
+                <GemiLookup
+                  companyName={form.companyName ?? ''}
+                  onSelect={(c) => setForm({ ...form, vatNumber: c.vatNumber, companyName: form.companyName || c.companyName })}
+                />
+              </div>
               <Input value={form.vatNumber ?? ''} onChange={(e) => setForm({ ...form, vatNumber: e.target.value })} />
             </div>
             <div className="space-y-2">
@@ -330,6 +371,13 @@ export function CustomersPage() {
               <Label>Address *</Label>
               <Textarea rows={2} value={form.address ?? ''} onChange={(e) => setForm({ ...form, address: e.target.value })} />
             </div>
+            <LocationPicker
+              latitude={form.latitude}
+              longitude={form.longitude}
+              onChange={(lat, lng) => setForm((prev) => ({ ...prev, latitude: lat, longitude: lng }))}
+              onEnrich={handleEnrich}
+              onAddressFound={(address) => setForm((prev) => ({ ...prev, address: prev.address || address }))}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
