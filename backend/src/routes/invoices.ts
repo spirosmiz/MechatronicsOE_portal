@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { body, validationResult } from 'express-validator';
+import multer from 'multer';
+import OpenAI from 'openai';
 import {
   UserRole, InvoiceDirection, InvoiceCategory, InvoiceStatus, PaymentMethod,
 } from '../lib/enums';
@@ -7,6 +9,8 @@ import prisma from '../lib/prisma';
 import { authenticate, requireRole } from '../middleware/auth';
 import { AuthenticatedRequest } from '../types';
 import { generateInvoicePdf } from '../lib/invoiceDocument';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 const router = Router();
 router.use(authenticate);
@@ -61,6 +65,84 @@ async function syncPaymentStatus(invoiceId: string): Promise<void> {
     }).catch(() => {/* non-fatal */});
   }
 }
+
+// POST /api/invoices/extract
+// Accepts a file (image or PDF), sends to OpenAI Vision, returns extracted invoice data for review
+router.post(
+  '/extract',
+  requireRole(UserRole.admin, UserRole.project_manager),
+  upload.single('file'),
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (!req.file) { res.status(400).json({ message: 'No file uploaded' }); return; }
+    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'sk-...') {
+      res.status(503).json({ message: 'OpenAI API key not configured. Add OPENAI_API_KEY to .env' }); return;
+    }
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const base64 = req.file.buffer.toString('base64');
+    const mime   = req.file.mimetype;
+
+    const systemPrompt = `You are an invoice OCR assistant. Extract all data from the invoice document.
+Return ONLY a valid JSON object — no markdown, no explanation — with exactly these fields:
+{
+  "invoiceNumber": string | null,
+  "issueDate": "YYYY-MM-DD" | null,
+  "dueDate": "YYYY-MM-DD" | null,
+  "supplierName": string | null,
+  "customerName": string | null,
+  "vatNumber": string | null,
+  "items": [ { "description": string, "quantity": number, "unitPrice": number } ],
+  "subtotal": number | null,
+  "taxRate": number | null,
+  "taxAmount": number | null,
+  "totalAmount": number | null,
+  "currency": string,
+  "notes": string | null
+}
+taxRate must be a decimal fraction (e.g. 0.24 for 24%, 0 for no tax).
+If a value cannot be determined, use null.`;
+
+    let content: OpenAI.Chat.ChatCompletionContentPart[];
+
+    if (mime === 'application/pdf') {
+      content = [
+        { type: 'text', text: 'Extract all invoice data from this PDF document.' },
+        {
+          type: 'file' as any,
+          file: { filename: req.file.originalname, file_data: `data:application/pdf;base64,${base64}` },
+        } as any,
+      ];
+    } else {
+      content = [
+        { type: 'text', text: 'Extract all invoice data from this image.' },
+        { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}`, detail: 'high' } },
+      ];
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content },
+      ],
+      max_tokens: 1500,
+      temperature: 0,
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? '{}';
+    const clean = raw.replace(/```json\n?|\n?```/g, '').trim();
+
+    let extracted: Record<string, unknown>;
+    try {
+      extracted = JSON.parse(clean);
+    } catch {
+      res.status(422).json({ message: 'Could not parse AI response', raw });
+      return;
+    }
+
+    res.json(extracted);
+  }
+);
 
 // GET /api/invoices
 router.get('/', async (req, res: Response) => {

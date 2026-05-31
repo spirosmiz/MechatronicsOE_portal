@@ -63,11 +63,12 @@ router.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) { res.status(400).json({ errors: errors.array() }); return; }
 
-    const { partNumber, brand, name, description, stockQuantity, safetyStockLevel, unitCost, unitPrice, ceCertified } = req.body;
+    const { partNumber, brand, name, description, stockQuantity, safetyStockLevel, unitCost, ceCertified } = req.body;
     const exists = await prisma.inventory.findUnique({ where: { partNumber } });
     if (exists) { res.status(409).json({ message: 'Part number already exists' }); return; }
 
     const { supplierId } = req.body;
+    const unitPrice = Number(unitCost) * 2; // selling price is always 2× unit cost
     const item = await prisma.inventory.create({
       data: {
         partNumber, brand: brand || null, name, description,
@@ -110,7 +111,8 @@ router.post('/:id/setup-drive', requireRole(UserRole.admin, UserRole.project_man
 
 // PUT /api/inventory/:id
 router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async (req, res: Response) => {
-  const { partNumber, brand, name, description, stockQuantity, safetyStockLevel, unitCost, unitPrice, ceCertified, supplierId } = req.body;
+  const { partNumber, brand, name, description, stockQuantity, safetyStockLevel, unitCost, ceCertified, supplierId } = req.body;
+  const unitPrice = Number(unitCost) * 2; // selling price is always 2× unit cost
   const item = await prisma.inventory.update({
     where: { id: req.params.id },
     data: {

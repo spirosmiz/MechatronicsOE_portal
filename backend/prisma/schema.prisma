@@ -145,9 +145,10 @@ model ServiceReport {
   technicianId     String?  @map("technician_id")
   workPerformed    String   @map("work_performed")
   hoursLogged      Decimal  @map("hours_logged")
-  workType         String?  @map("work_type") // SERVICE_ENGINEER | DESIGN_ENGINEER | PROJECT_MANAGER
-  digitalSignature String?  @map("digital_signature")
-  submittedAt      DateTime @default(now()) @map("submitted_at")
+  workType            String?  @map("work_type") // SERVICE_ENGINEER | DESIGN_ENGINEER | PROJECT_MANAGER
+  digitalSignature    String?  @map("digital_signature")
+  transportationCost  Decimal? @map("transportation_cost")
+  submittedAt         DateTime @default(now()) @map("submitted_at")
 
   project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   technician User?   @relation(fields: [technicianId], references: [id])

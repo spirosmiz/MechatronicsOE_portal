@@ -104,6 +104,7 @@ export interface ServiceReport {
   hoursLogged: string | number;
   workType?: string | null;
   digitalSignature?: string;
+  transportationCost?: string | number | null;
   submittedAt: string;
 }
 

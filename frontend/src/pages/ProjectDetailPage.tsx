@@ -1,14 +1,16 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Edit, Trash2, Plus, FileText, Package, Clock,
   CheckCircle2, Building2, Cpu, User, Calendar, FileSignature, Receipt, Paperclip,
+  TrendingUp, TrendingDown, ScanLine, Loader2,
 } from 'lucide-react';
 import {
   useProject, useUpdateProject, useUpdateProjectStatus, useDeleteProject,
   useCreateServiceReport, useInventory, useGenerateInvoice, useInvoices, useCurrentLaborRates,
+  useCustomers, useMachines,
 } from '@/hooks/useQueries';
-import { projectsApi } from '@/lib/api';
+import { projectsApi, invoicesApi } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { KEYS } from '@/hooks/useQueries';
 import { useAuth } from '@/hooks/useAuth';
@@ -35,6 +37,8 @@ export function ProjectDetailPage() {
   const navigate = useNavigate();
   const { data: project, isLoading } = useProject(id!);
   const { data: inventoryItems = [] } = useInventory();
+  const { data: customers = [] } = useCustomers();
+  const { data: machines = [] } = useMachines();
   const updateMut      = useUpdateProject();
   const statusMut      = useUpdateProjectStatus();
   const deleteMut      = useDeleteProject();
@@ -50,12 +54,30 @@ export function ProjectDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [matOpen, setMatOpen] = useState(false);
+  const [costOpen, setCostOpen] = useState(false);
+  const [invoicePreviewOpen, setInvoicePreviewOpen] = useState(false);
+
+  type PreviewLine = {
+    key: string;
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    lineTotal: number;
+    hoursLogged?: number;
+    hourlyRate?: number;
+    isMarkup?: boolean;
+    included: boolean;
+  };
+  const [previewLines, setPreviewLines] = useState<PreviewLine[]>([]);
   const [editForm, setEditForm] = useState<Record<string, string>>({});
-  const [reportForm, setReportForm] = useState({ workPerformed: '', hoursLogged: '', workType: 'SERVICE_ENGINEER', digitalSignature: '' });
+  const [reportForm, setReportForm] = useState({ workPerformed: '', hoursLogged: '', workType: 'SERVICE_ENGINEER', digitalSignature: '', transportationCost: '' });
   const [matForm, setMatForm] = useState({ inventoryId: '', qty: '1', description: '', unitPrice: '', partNumber: '', brand: '', stockQty: '0' });
   const [reportMediaTarget, setReportMediaTarget] = useState<ServiceReport | null>(null);
   const [matMode, setMatMode]         = useState<'inventory' | 'custom'>('inventory');
   const [saveToInventory, setSaveToInventory] = useState(false);
+  const [matScanning, setMatScanning] = useState(false);
+  const [matScanNote, setMatScanNote] = useState('');
+  const matFileRef = useRef<HTMLInputElement>(null);
 
   if (isLoading) {
     return (
@@ -72,6 +94,8 @@ export function ProjectDetailPage() {
       title: project!.title,
       type: project!.type,
       status: project!.status,
+      customerId: project!.customerId ?? '',
+      machineId: project!.machineId ?? '',
       estimatedLaborHours: String(project!.estimatedLaborHours),
       actualLaborHours: String(project!.actualLaborHours),
       quotedTotalPrice: String(project!.quotedTotalPrice),
@@ -86,6 +110,8 @@ export function ProjectDetailPage() {
         id: id!,
         data: {
           title: editForm.title, type: editForm.type, status: editForm.status,
+          customerId: editForm.customerId || undefined,
+          machineId: editForm.machineId || undefined,
           estimatedLaborHours: parseFloat(editForm.estimatedLaborHours),
           actualLaborHours: parseFloat(editForm.actualLaborHours),
           quotedTotalPrice: parseFloat(editForm.quotedTotalPrice),
@@ -131,12 +157,45 @@ export function ProjectDetailPage() {
         hoursLogged: parseFloat(reportForm.hoursLogged),
         workType: reportForm.workType || undefined,
         digitalSignature: reportForm.digitalSignature || undefined,
+        transportationCost: reportForm.transportationCost ? parseFloat(reportForm.transportationCost) : undefined,
       });
       toast({ title: 'Service report submitted' });
-      setReportForm({ workPerformed: '', hoursLogged: '', workType: 'SERVICE_ENGINEER', digitalSignature: '' });
+      setReportForm({ workPerformed: '', hoursLogged: '', workType: 'SERVICE_ENGINEER', digitalSignature: '', transportationCost: '' });
       setReportOpen(false);
     } catch {
       toast({ title: 'Failed to submit report', variant: 'destructive' });
+    }
+  }
+
+  async function handleScanReceipt(file: File) {
+    setMatScanning(true);
+    setMatScanNote('');
+    try {
+      const res = await invoicesApi.extract(file);
+      const d = (res as any).data as Record<string, any>;
+      const items: any[] = d.items ?? [];
+      const first = items[0];
+      if (!first) {
+        toast({ title: 'No line items found in receipt', variant: 'destructive' });
+        return;
+      }
+      setMatMode('custom');
+      setMatForm((f) => ({
+        ...f,
+        description: first.description ?? f.description,
+        qty:         first.quantity != null ? String(Math.round(Number(first.quantity))) : f.qty,
+        unitPrice:   first.unitPrice != null ? String(Number(first.unitPrice).toFixed(2)) : f.unitPrice,
+      }));
+      const note = items.length > 1
+        ? `${items.length} items found — showing first. Adjust description/qty/price if needed.`
+        : 'Receipt scanned — review and confirm.';
+      setMatScanNote(note);
+    } catch (e: any) {
+      const msg = e?.response?.data?.message ?? 'Scan failed';
+      toast({ title: msg, variant: 'destructive' });
+    } finally {
+      setMatScanning(false);
+      if (matFileRef.current) matFileRef.current.value = '';
     }
   }
 
@@ -187,12 +246,76 @@ export function ProjectDetailPage() {
     }
   }
 
+  function openInvoicePreview() {
+    if (!project) return;
+    const WORK_TYPE_LABELS: Record<string, string> = {
+      SERVICE_ENGINEER: 'Service / Installation',
+      DESIGN_ENGINEER:  'Design / Engineering',
+      PROJECT_MANAGER:  'Project Management',
+    };
+    const lines: PreviewLine[] = [];
+
+    for (const r of project.serviceReports ?? []) {
+      const role = r.workType === 'DESIGN_ENGINEER' || r.workType === 'PROJECT_MANAGER'
+        ? r.workType : 'SERVICE_ENGINEER';
+      const rate     = rateMap[role] ?? 0;
+      const hours    = Number(r.hoursLogged);
+      const dateStr  = new Date(r.submittedAt).toLocaleDateString('en-GB');
+      const lineTotal = hours * rate;
+      lines.push({
+        key: `report-${r.id}`,
+        description: `${WORK_TYPE_LABELS[role]} — ${r.technician?.name ?? 'Technician'} (${dateStr})`,
+        quantity: hours, unitPrice: rate, lineTotal,
+        hoursLogged: hours, hourlyRate: rate,
+        included: true,
+      });
+      const transCost = Number(r.transportationCost ?? 0);
+      if (transCost > 0) {
+        lines.push({
+          key: `transport-${r.id}`,
+          description: `Transportation — ${r.technician?.name ?? 'Technician'} (${dateStr})`,
+          quantity: 1, unitPrice: transCost, lineTotal: transCost,
+          included: true,
+        });
+      }
+    }
+
+    for (const m of project.projectMaterials ?? []) {
+      const costPerUnit  = Number(m.unitCostAtQuote);
+      const sellingPrice = costPerUnit * 2;
+      const qty          = m.quantityRequired;
+      const label        = m.description ?? (m as any).inventory?.name ?? 'Custom Part';
+      lines.push({
+        key: `material-${m.id}`,
+        description: label,
+        quantity: qty, unitPrice: sellingPrice, lineTotal: qty * sellingPrice,
+        isMarkup: true,
+        included: true,
+      });
+    }
+
+    setPreviewLines(lines);
+    setInvoicePreviewOpen(true);
+  }
+
   async function handleGenerateInvoice() {
-    if (!confirm('Generate a draft invoice from all service reports and materials on this project?')) return;
+    const included = previewLines.filter((l) => l.included);
+    if (included.length === 0) {
+      toast({ title: 'Select at least one line to include', variant: 'destructive' });
+      return;
+    }
     try {
-      const res = await generateMut.mutateAsync(id!);
+      const res = await generateMut.mutateAsync({
+        projectId: id!,
+        previewItems: included.map(({ description, quantity, unitPrice, lineTotal, hoursLogged, hourlyRate }) => ({
+          description, quantity, unitPrice, lineTotal,
+          hoursLogged: hoursLogged ?? null,
+          hourlyRate:  hourlyRate  ?? null,
+        })),
+      });
       const invoice = (res as { data?: { id?: string } }).data;
       toast({ title: 'Draft invoice created — review it before issuing' });
+      setInvoicePreviewOpen(false);
       if (invoice?.id) navigate(`/invoices/${invoice.id}`);
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to generate invoice';
@@ -207,6 +330,39 @@ export function ProjectDetailPage() {
   const materialsTotal = project.projectMaterials?.reduce(
     (sum, m) => sum + Number(m.unitPriceAtQuote) * m.quantityRequired, 0
   ) ?? 0;
+
+  // ── Actual vs Quoted calculations ──────────────────────────────────────────
+  const rateMap = Object.fromEntries(currentRates.map((r) => [r.role, Number(r.ratePerHour)]));
+
+  const actualByType = (project.serviceReports ?? []).reduce<Record<string, number>>((acc, r) => {
+    const t = r.workType ?? 'SERVICE_ENGINEER';
+    acc[t] = (acc[t] ?? 0) + Number(r.hoursLogged);
+    return acc;
+  }, {});
+
+  const actualDesignHours  = actualByType['DESIGN_ENGINEER']  ?? 0;
+  const actualServiceHours = actualByType['SERVICE_ENGINEER'] ?? 0;
+  const actualMgmtHours    = actualByType['PROJECT_MANAGER']  ?? 0;
+
+  const actualLaborCost =
+    actualDesignHours  * (rateMap['DESIGN_ENGINEER']  ?? 0) +
+    actualServiceHours * (rateMap['SERVICE_ENGINEER'] ?? 0) +
+    actualMgmtHours    * (rateMap['PROJECT_MANAGER']  ?? 0);
+
+  const actualTransportCost = (project.serviceReports ?? []).reduce(
+    (sum, r) => sum + Number(r.transportationCost ?? 0), 0
+  );
+
+  const actualTotal = actualLaborCost + materialsTotal + actualTransportCost;
+
+  const offerItems     = project.offer?.items ?? [];
+  const designItem     = offerItems.find((i) => i.description.startsWith('Design Engineering'));
+  const serviceItem    = offerItems.find((i) => i.description.startsWith('Service / Installation'));
+  const quotedDesignH  = designItem  ? Number(designItem.quantity)  : 0;
+  const quotedDesignR  = designItem  ? Number(designItem.unitPrice)  : 0;
+  const quotedServiceH = serviceItem ? Number(serviceItem.quantity) : 0;
+  const quotedServiceR = serviceItem ? Number(serviceItem.unitPrice) : 0;
+  const quotedTotal = Number(project.quotedTotalPrice);
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -239,7 +395,7 @@ export function ProjectDetailPage() {
               <Button
                 variant="outline"
                 className="border-green-300 text-green-700 hover:bg-green-50"
-                onClick={handleGenerateInvoice}
+                onClick={openInvoicePreview}
                 disabled={generateMut.isPending}
               >
                 <Receipt className="w-4 h-4 mr-2" />
@@ -255,7 +411,7 @@ export function ProjectDetailPage() {
       </div>
 
       {/* Info grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Customer/Machine */}
         <Card>
           <CardContent className="p-4 space-y-3">
@@ -356,6 +512,36 @@ export function ProjectDetailPage() {
             })()}
           </CardContent>
         </Card>
+
+        {/* Actual vs Quoted — summary widget */}
+        {(() => {
+          const diff = actualTotal - quotedTotal;
+          const pct  = quotedTotal > 0 ? (diff / quotedTotal) * 100 : 0;
+          const over = diff > 0;
+          return (
+            <Card
+              className="cursor-pointer hover:shadow-md transition-shadow border-dashed"
+              onClick={() => setCostOpen(true)}
+            >
+              <CardContent className="p-4 space-y-2">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <TrendingUp className="w-3.5 h-3.5" /> Cost Analysis
+                </p>
+                <p className={`text-2xl font-bold ${over ? 'text-red-600' : 'text-green-600'}`}>
+                  {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
+                </p>
+                <p className={`text-xs font-medium ${over ? 'text-red-500' : 'text-green-500'}`}>
+                  {over ? 'Over' : 'Under'} budget
+                  {quotedTotal > 0 && ` · ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Actual: {formatCurrency(actualTotal)}
+                </p>
+                <p className="text-xs text-blue-600 font-medium">Click for breakdown →</p>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {/* Labor progress */}
         <Card>
@@ -518,6 +704,11 @@ export function ProjectDetailPage() {
                     </div>
                   </div>
                   <p className="text-sm text-muted-foreground whitespace-pre-wrap">{r.workPerformed}</p>
+                  {Number(r.transportationCost ?? 0) > 0 && (
+                    <p className="text-xs text-orange-600 mt-1">
+                      Transport: {formatCurrency(r.transportationCost!)}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -533,7 +724,7 @@ export function ProjectDetailPage() {
             <span className="text-sm font-normal text-muted-foreground">({projectInvoices.length})</span>
           </CardTitle>
           {canEdit && project.status === 'completed' && (
-            <Button size="sm" variant="outline" className="text-green-700 border-green-300 hover:bg-green-50" onClick={handleGenerateInvoice} disabled={generateMut.isPending}>
+            <Button size="sm" variant="outline" className="text-green-700 border-green-300 hover:bg-green-50" onClick={openInvoicePreview} disabled={generateMut.isPending}>
               <Plus className="w-3.5 h-3.5 mr-1" /> {generateMut.isPending ? 'Generating…' : 'Generate Invoice'}
             </Button>
           )}
@@ -567,9 +758,105 @@ export function ProjectDetailPage() {
         </CardContent>
       </Card>
 
+      {/* Invoice Preview Dialog */}
+      <Dialog open={invoicePreviewOpen} onOpenChange={setInvoicePreviewOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Receipt className="w-4 h-4" /> Review Invoice Lines
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground -mt-1">
+            Uncheck any lines to exclude them from the invoice. Materials are billed at 2× purchase cost.
+          </p>
+          <div className="rounded-lg border overflow-hidden text-sm">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  <th className="w-8 px-3 py-2" />
+                  <th className="px-3 py-2 text-left">Description</th>
+                  <th className="px-3 py-2 text-right w-16">Qty</th>
+                  <th className="px-3 py-2 text-right w-28">Unit €</th>
+                  <th className="px-3 py-2 text-right w-28">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {previewLines.map((line) => (
+                  <tr
+                    key={line.key}
+                    className={`transition-colors ${line.included ? '' : 'opacity-40 bg-gray-50'}`}
+                  >
+                    <td className="px-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={line.included}
+                        onChange={(e) =>
+                          setPreviewLines((prev) =>
+                            prev.map((l) => l.key === line.key ? { ...l, included: e.target.checked } : l)
+                          )
+                        }
+                        className="w-4 h-4 rounded"
+                      />
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span>{line.description}</span>
+                      {line.isMarkup && (
+                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                          ×2 markup
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-muted-foreground">{line.quantity}</td>
+                    <td className="px-3 py-2.5 text-right">{formatCurrency(line.unitPrice)}</td>
+                    <td className="px-3 py-2.5 text-right font-medium">{formatCurrency(line.lineTotal)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Totals summary */}
+          {(() => {
+            const subtotal   = previewLines.filter((l) => l.included).reduce((s, l) => s + l.lineTotal, 0);
+            const taxAmount  = subtotal * 0.24;
+            const total      = subtotal + taxAmount;
+            const excluded   = previewLines.filter((l) => !l.included).length;
+            return (
+              <div className="flex items-end justify-between gap-4">
+                {excluded > 0 && (
+                  <p className="text-xs text-muted-foreground">{excluded} line{excluded > 1 ? 's' : ''} excluded</p>
+                )}
+                <div className="ml-auto w-56 space-y-1 text-sm">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Subtotal</span><span>{formatCurrency(subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>VAT 24%</span><span>{formatCurrency(taxAmount)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold border-t pt-1">
+                    <span>Total</span><span>{formatCurrency(total)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInvoicePreviewOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleGenerateInvoice}
+              disabled={generateMut.isPending || previewLines.every((l) => !l.included)}
+              className="bg-green-700 hover:bg-green-800 text-white"
+            >
+              {generateMut.isPending ? 'Generating…' : 'Confirm & Generate Invoice'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Edit Project Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Project</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-4 py-2">
             <div className="col-span-2 space-y-2">
@@ -591,6 +878,30 @@ export function ProjectDetailPage() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {STATUSES.map((s) => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Customer</Label>
+              <Select value={editForm.customerId ?? ''} onValueChange={(v) => setEditForm({ ...editForm, customerId: v, machineId: '' })}>
+                <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
+                <SelectContent>
+                  {customers.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.companyName}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Machine</Label>
+              <Select
+                value={editForm.machineId ?? ''}
+                onValueChange={(v) => setEditForm({ ...editForm, machineId: v })}
+                disabled={!editForm.customerId}
+              >
+                <SelectTrigger><SelectValue placeholder="Select machine" /></SelectTrigger>
+                <SelectContent>
+                  {machines
+                    .filter((m: any) => m.customerId === editForm.customerId)
+                    .map((m: any) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -651,6 +962,15 @@ export function ProjectDetailPage() {
                 <Input value={reportForm.digitalSignature} onChange={(e) => setReportForm({ ...reportForm, digitalSignature: e.target.value })} placeholder="NAME_DATE" />
               </div>
             </div>
+            <div className="space-y-2">
+              <Label>Transportation Cost (€)</Label>
+              <Input
+                type="number" min="0" step="0.01" placeholder="0.00 — leave blank if none"
+                value={reportForm.transportationCost}
+                onChange={(e) => setReportForm({ ...reportForm, transportationCost: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">Fuel, tolls, and any other travel costs for this work session.</p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReportOpen(false)}>Cancel</Button>
@@ -673,8 +993,145 @@ export function ProjectDetailPage() {
         />
       )}
 
+      {/* Actual vs Quoted Cost Analysis Dialog */}
+      <Dialog open={costOpen} onOpenChange={setCostOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <TrendingUp className="w-4 h-4" /> Actual vs Quoted Costs
+            </DialogTitle>
+          </DialogHeader>
+          <div className="divide-y text-sm">
+            <div className="grid grid-cols-4 gap-4 px-2 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide bg-gray-50 rounded">
+              <span>Category</span>
+              <span className="text-right">Quoted</span>
+              <span className="text-right">Actual</span>
+              <span className="text-right">Variance</span>
+            </div>
+
+            {(quotedDesignH > 0 || actualDesignHours > 0) && (() => {
+              const q = quotedDesignH * quotedDesignR;
+              const a = actualDesignHours * (rateMap['DESIGN_ENGINEER'] ?? 0);
+              const diff = a - q;
+              return (
+                <div className="grid grid-cols-4 gap-4 px-2 py-3 items-center">
+                  <span className="text-muted-foreground">
+                    Design Labor
+                    <span className="block text-xs opacity-60">
+                      {quotedDesignH > 0 && `${quotedDesignH.toFixed(1)}h quoted`}
+                      {actualDesignHours > 0 && ` · ${actualDesignHours.toFixed(1)}h actual`}
+                    </span>
+                  </span>
+                  <span className="text-right font-medium">{formatCurrency(q)}</span>
+                  <span className="text-right font-medium">{formatCurrency(a)}</span>
+                  <span className={`text-right font-semibold flex items-center justify-end gap-1 ${diff > 0 ? 'text-red-600' : diff < 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {diff !== 0 && (diff > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />)}
+                    {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {(quotedServiceH > 0 || actualServiceHours > 0) && (() => {
+              const q = quotedServiceH * quotedServiceR;
+              const a = actualServiceHours * (rateMap['SERVICE_ENGINEER'] ?? 0);
+              const diff = a - q;
+              return (
+                <div className="grid grid-cols-4 gap-4 px-2 py-3 items-center">
+                  <span className="text-muted-foreground">
+                    Service Labor
+                    <span className="block text-xs opacity-60">
+                      {quotedServiceH > 0 && `${quotedServiceH.toFixed(1)}h quoted`}
+                      {actualServiceHours > 0 && ` · ${actualServiceHours.toFixed(1)}h actual`}
+                    </span>
+                  </span>
+                  <span className="text-right font-medium">{formatCurrency(q)}</span>
+                  <span className="text-right font-medium">{formatCurrency(a)}</span>
+                  <span className={`text-right font-semibold flex items-center justify-end gap-1 ${diff > 0 ? 'text-red-600' : diff < 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {diff !== 0 && (diff > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />)}
+                    {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {actualMgmtHours > 0 && (() => {
+              const a = actualMgmtHours * (rateMap['PROJECT_MANAGER'] ?? 0);
+              return (
+                <div className="grid grid-cols-4 gap-4 px-2 py-3 items-center">
+                  <span className="text-muted-foreground">
+                    Management Labor
+                    <span className="block text-xs opacity-60">{actualMgmtHours.toFixed(1)}h actual</span>
+                  </span>
+                  <span className="text-right font-medium text-muted-foreground">—</span>
+                  <span className="text-right font-medium">{formatCurrency(a)}</span>
+                  <span className="text-right font-semibold text-red-600 flex items-center justify-end gap-1">
+                    <TrendingUp className="w-3.5 h-3.5" />+{formatCurrency(a)}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {(() => {
+              const offerPartsItem = offerItems.find((i) => i.description === 'Parts' || i.description.startsWith('Parts — ') || i.description === 'Machining');
+              const quotedMat = offerPartsItem ? Number(offerPartsItem.unitPrice) * Number(offerPartsItem.quantity) : 0;
+              const diff = materialsTotal - quotedMat;
+              return (
+                <div className="grid grid-cols-4 gap-4 px-2 py-3 items-center">
+                  <span className="text-muted-foreground">Materials / Parts</span>
+                  <span className="text-right font-medium">{formatCurrency(quotedMat)}</span>
+                  <span className="text-right font-medium">{formatCurrency(materialsTotal)}</span>
+                  <span className={`text-right font-semibold flex items-center justify-end gap-1 ${diff > 0 ? 'text-red-600' : diff < 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {diff !== 0 && (diff > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />)}
+                    {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {(() => {
+              const transportItem = offerItems.find((i) => i.description === 'Transportation');
+              const q = transportItem ? Number(transportItem.unitPrice) * Number(transportItem.quantity) : 0;
+              if (q === 0 && actualTransportCost === 0) return null;
+              const diff = actualTransportCost - q;
+              return (
+                <div className="grid grid-cols-4 gap-4 px-2 py-3 items-center">
+                  <span className="text-muted-foreground">Transportation</span>
+                  <span className="text-right font-medium">{formatCurrency(q)}</span>
+                  <span className="text-right font-medium">{formatCurrency(actualTransportCost)}</span>
+                  <span className={`text-right font-semibold flex items-center justify-end gap-1 ${diff > 0 ? 'text-red-600' : diff < 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {diff !== 0 && (diff > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />)}
+                    {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {(() => {
+              const diff = actualTotal - quotedTotal;
+              const pct  = quotedTotal > 0 ? (diff / quotedTotal) * 100 : 0;
+              return (
+                <div className="grid grid-cols-4 gap-4 px-2 py-3 items-center bg-gray-50 rounded font-semibold">
+                  <span>Total</span>
+                  <span className="text-right text-blue-700">{formatCurrency(quotedTotal)}</span>
+                  <span className="text-right">{formatCurrency(actualTotal)}</span>
+                  <span className={`text-right flex items-center justify-end gap-1 ${diff > 0 ? 'text-red-600' : diff < 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                    {diff !== 0 && (diff > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />)}
+                    {diff >= 0 ? '+' : ''}{formatCurrency(diff)}
+                    {quotedTotal > 0 && <span className="text-xs font-normal opacity-70">({pct >= 0 ? '+' : ''}{pct.toFixed(1)}%)</span>}
+                  </span>
+                </div>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCostOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Add Material Dialog */}
-      <Dialog open={matOpen} onOpenChange={(v) => { setMatOpen(v); if (!v) { setMatMode('inventory'); setSaveToInventory(false); setMatForm({ inventoryId: '', qty: '1', description: '', unitPrice: '', partNumber: '', brand: '', stockQty: '0' }); } }}>
+      <Dialog open={matOpen} onOpenChange={(v) => { setMatOpen(v); if (!v) { setMatMode('inventory'); setSaveToInventory(false); setMatScanNote(''); setMatForm({ inventoryId: '', qty: '1', description: '', unitPrice: '', partNumber: '', brand: '', stockQty: '0' }); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Add Material</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
@@ -725,6 +1182,39 @@ export function ProjectDetailPage() {
               </>
             ) : (
               <>
+                {/* Scan receipt */}
+                <div className="rounded-lg border border-dashed p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                      <ScanLine className="w-3.5 h-3.5" /> Scan purchase receipt
+                    </p>
+                    <label className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md border cursor-pointer transition-colors
+                      ${matScanning ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
+                      {matScanning
+                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Scanning…</>
+                        : <><ScanLine className="w-3.5 h-3.5" /> Upload / Photo</>}
+                      <input
+                        ref={matFileRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/heic,application/pdf"
+                        className="hidden"
+                        disabled={matScanning}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleScanReceipt(f); }}
+                      />
+                    </label>
+                  </div>
+                  {matScanNote && (
+                    <p className="text-xs text-blue-600 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 flex-shrink-0" /> {matScanNote}
+                    </p>
+                  )}
+                  {!matScanNote && !matScanning && (
+                    <p className="text-xs text-muted-foreground">
+                      Upload a photo or PDF — AI will extract description, quantity, and price.
+                    </p>
+                  )}
+                </div>
+
                 <div className="space-y-2">
                   <Label>Description *</Label>
                   <Input

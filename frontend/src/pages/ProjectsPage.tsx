@@ -78,8 +78,8 @@ export function ProjectsPage() {
   function removeMaterial(idx: number) { setMaterials((prev) => prev.filter((_, i) => i !== idx)); }
 
   async function handleCreate() {
-    if (!form.title || !form.type || !form.quotedTotalPrice) {
-      toast({ title: 'Title, type, and price are required', variant: 'destructive' });
+    if (!form.title || !form.type) {
+      toast({ title: 'Title and type are required', variant: 'destructive' });
       return;
     }
     try {
@@ -310,8 +310,8 @@ export function ProjectsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Quoted Total (€) *</Label>
-                <Input type="number" min="0" step="0.01" value={form.quotedTotalPrice} onChange={(e) => setForm({ ...form, quotedTotalPrice: e.target.value })} />
+                <Label>Quoted Total (€)</Label>
+                <Input type="number" min="0" step="0.01" value={form.quotedTotalPrice} onChange={(e) => setForm({ ...form, quotedTotalPrice: e.target.value })} placeholder="0.00" />
               </div>
               <div className="space-y-2">
                 <Label>Est. Labor Hours</Label>

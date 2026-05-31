@@ -82,7 +82,7 @@ export const projectsApi = {
   addMaterial: (id: string, data: Record<string, unknown>) => api.post(`/projects/${id}/materials`, data),
   removeMaterial: (projectId: string, materialId: string) =>
     api.delete(`/projects/${projectId}/materials/${materialId}`),
-  generateInvoice: (id: string) => api.post(`/projects/${id}/generate-invoice`),
+  generateInvoice: (id: string, data?: Record<string, unknown>) => api.post(`/projects/${id}/generate-invoice`, data ?? {}),
   delete: (id: string) => api.delete(`/projects/${id}`),
 };
 
@@ -143,6 +143,11 @@ export const invoicesApi = {
   addPayment: (id: string, data: Record<string, unknown>) => api.post(`/invoices/${id}/payments`, data),
   deletePayment: (id: string, paymentId: string) => api.delete(`/invoices/${id}/payments/${paymentId}`),
   downloadPdf: (id: string) => api.get(`/invoices/${id}/pdf`, { responseType: 'blob' }),
+  extract: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post('/invoices/extract', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
 };
 
 // Media

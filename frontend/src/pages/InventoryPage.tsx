@@ -85,7 +85,7 @@ export function InventoryPage() {
     setForm({
       partNumber: item.partNumber, brand: item.brand ?? '', name: item.name, description: item.description ?? '',
       stockQuantity: String(item.stockQuantity), safetyStockLevel: String(item.safetyStockLevel),
-      unitCost: String(item.unitCost), unitPrice: String(item.unitPrice),
+      unitCost: String(item.unitCost), unitPrice: String((Number(item.unitCost) * 2).toFixed(2)),
       ceCertified: String(item.ceCertified),
       supplierId: item.supplierId ?? '',
     });
@@ -383,11 +383,15 @@ export function InventoryPage() {
             </div>
             <div className="space-y-2">
               <Label>Unit Cost (€)</Label>
-              <Input type="number" min="0" step="0.01" value={form.unitCost} onChange={(e) => setForm({ ...form, unitCost: e.target.value })} />
+              <Input
+                type="number" min="0" step="0.01"
+                value={form.unitCost}
+                onChange={(e) => setForm({ ...form, unitCost: e.target.value, unitPrice: String((Number(e.target.value) * 2).toFixed(2)) })}
+              />
             </div>
             <div className="space-y-2">
-              <Label>Unit Price (€)</Label>
-              <Input type="number" min="0" step="0.01" value={form.unitPrice} onChange={(e) => setForm({ ...form, unitPrice: e.target.value })} />
+              <Label>Selling Price (€) <span className="text-xs text-muted-foreground font-normal">auto: cost × 2</span></Label>
+              <Input type="number" min="0" step="0.01" value={form.unitPrice} readOnly className="bg-gray-50 text-muted-foreground cursor-not-allowed" />
             </div>
             <div className="col-span-2 space-y-2">
               <Label>Preferred Supplier</Label>

@@ -62,7 +62,7 @@ export function AppLayout() {
             <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
               <Settings className="w-5 h-5" />
             </div>
-            <span className="font-bold text-lg">Mechautolabs</span>
+            <span className="font-bold text-lg">Automechlabs</span>
           </div>
           <button className="lg:hidden" onClick={() => setSidebarOpen(false)}>
             <X className="w-5 h-5" />
@@ -143,7 +143,7 @@ export function AppLayout() {
           <button onClick={() => setSidebarOpen(true)} className="mr-4">
             <Menu className="w-6 h-6" />
           </button>
-          <span className="font-semibold text-slate-800">Mechautolabs Portal</span>
+          <span className="font-semibold text-slate-800">Automechlabs Portal</span>
         </header>
 
         {/* Page content */}

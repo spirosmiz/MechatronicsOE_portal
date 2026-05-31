@@ -37,7 +37,7 @@ export function LoginPage() {
           <div className="w-16 h-16 bg-blue-500 rounded-2xl flex items-center justify-center mb-4 shadow-lg">
             <Settings className="w-9 h-9" />
           </div>
-          <h1 className="text-3xl font-bold">Mechautolabs Portal</h1>
+          <h1 className="text-3xl font-bold">Automechlabs Portal</h1>
           <p className="text-slate-400 mt-1">Industrial Service & Retrofit Management</p>
         </div>
 
@@ -53,7 +53,7 @@ export function LoginPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="you@Mechautolabs.com"
+                  placeholder="you@Automechlabs.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required

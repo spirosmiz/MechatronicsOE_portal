@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Plus, Search, Receipt, TrendingUp, TrendingDown, Clock,
-  Trash2, Eye, ChevronDown, Pencil,
+  Trash2, Eye, ChevronDown, Pencil, ScanLine, Upload, Loader2, CheckCircle2,
 } from 'lucide-react';
 import {
   useInvoices, useInvoiceStats, useCreateInvoice, useUpdateInvoice,
@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Invoice, InvoiceDirection, InvoiceCategory } from '@/types';
+import { invoicesApi } from '@/lib/api';
 import {
   formatCurrency, formatDate,
   INVOICE_STATUS_COLORS, INVOICE_STATUS_LABELS,
@@ -67,6 +68,14 @@ export function InvoicesPage() {
   const [form, setForm]                       = useState(EMPTY_FORM);
   const [items, setItems]                     = useState<ItemRow[]>([{ ...EMPTY_ITEM }]);
 
+  // Upload + AI extraction state
+  const [uploadOpen, setUploadOpen]         = useState(false);
+  const [uploadFile, setUploadFile]         = useState<File | null>(null);
+  const [uploadDragging, setUploadDragging] = useState(false);
+  const [extracting, setExtracting]         = useState(false);
+  const [extractedNote, setExtractedNote]   = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const params: Record<string, string> = {};
   if (filterDirection !== 'all') params.direction = filterDirection;
   if (filterStatus    !== 'all') params.status    = filterStatus;
@@ -103,6 +112,7 @@ export function InvoicesPage() {
     setEditing(null);
     setForm(EMPTY_FORM);
     setItems([{ ...EMPTY_ITEM }]);
+    setExtractedNote('');
     setOpen(true);
   }
 
@@ -131,6 +141,71 @@ export function InvoicesPage() {
       }))
     );
     setOpen(true);
+  }
+
+  const handleFileDrop = useCallback((file: File) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf'];
+    if (!allowed.includes(file.type)) {
+      toast({ title: 'Unsupported file type. Use JPG, PNG, WEBP, or PDF.', variant: 'destructive' });
+      return;
+    }
+    setUploadFile(file);
+  }, [toast]);
+
+  async function handleExtract() {
+    if (!uploadFile) return;
+    setExtracting(true);
+    setExtractedNote('');
+    try {
+      const res = await invoicesApi.extract(uploadFile);
+      const d = (res as any).data as Record<string, any>;
+
+      // Map AI direction hint: if supplier is set and customer is us, it's INCOMING
+      // We let the user override, but default based on document
+      const direction: InvoiceDirection = 'INCOMING'; // physical receipts are usually expenses
+      const cat: InvoiceCategory = 'OPERATIONAL';
+
+      const taxRate = d.taxRate != null ? String(d.taxRate) : '0.24';
+
+      setForm({
+        direction,
+        category: cat,
+        customerId: '',
+        supplierId: '',
+        projectId: '',
+        offerId: '',
+        taxRate,
+        currency: d.currency ?? 'EUR',
+        issueDate: d.issueDate ?? new Date().toISOString().split('T')[0],
+        dueDate: d.dueDate ?? '',
+        notes: [
+          d.notes,
+          d.supplierName   ? `Supplier: ${d.supplierName}` : null,
+          d.customerName   ? `Customer: ${d.customerName}` : null,
+          d.vatNumber      ? `VAT: ${d.vatNumber}` : null,
+          d.invoiceNumber  ? `Ref: ${d.invoiceNumber}` : null,
+        ].filter(Boolean).join(' · ') || '',
+      });
+
+      const extractedItems: ItemRow[] = (d.items ?? []).map((it: any) => ({
+        description: it.description ?? '',
+        quantity:    String(it.quantity ?? 1),
+        unitPrice:   String(it.unitPrice ?? 0),
+        hoursLogged: '',
+        hourlyRate:  '',
+      }));
+
+      setItems(extractedItems.length > 0 ? extractedItems : [{ ...EMPTY_ITEM }]);
+      setEditing(null);
+      setExtractedNote(d.invoiceNumber ? `Extracted from: ${d.invoiceNumber}` : 'Data extracted — please review before saving');
+      setUploadOpen(false);
+      setOpen(true);
+    } catch (e: any) {
+      const msg = e?.response?.data?.message ?? 'Extraction failed';
+      toast({ title: msg, variant: 'destructive' });
+    } finally {
+      setExtracting(false);
+    }
   }
 
   async function handleSave() {
@@ -205,9 +280,14 @@ export function InvoicesPage() {
           <p className="text-muted-foreground">{invoices.length} total invoices</p>
         </div>
         {canEdit && (
-          <Button onClick={openCreate}>
-            <Plus className="w-4 h-4 mr-2" /> New Invoice
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => { setUploadFile(null); setUploadOpen(true); }}>
+              <ScanLine className="w-4 h-4 mr-2" /> Scan Invoice
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus className="w-4 h-4 mr-2" /> New Invoice
+            </Button>
+          </div>
         )}
       </div>
 
@@ -402,6 +482,77 @@ export function InvoicesPage() {
         </div>
       )}
 
+      {/* Scan / Upload Dialog */}
+      <Dialog open={uploadOpen} onOpenChange={(v) => { setUploadOpen(v); if (!v) setUploadFile(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ScanLine className="w-4 h-4" /> Scan Invoice
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Upload a photo or PDF of a physical invoice. AI will extract the data and pre-fill the form for you to review.
+            </p>
+
+            {/* Drop zone */}
+            <div
+              className={`relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 transition-colors cursor-pointer
+                ${uploadDragging ? 'border-blue-400 bg-blue-50' : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setUploadDragging(true); }}
+              onDragLeave={() => setUploadDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setUploadDragging(false);
+                const file = e.dataTransfer.files[0];
+                if (file) handleFileDrop(file);
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/heic,application/pdf"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileDrop(f); }}
+              />
+              {uploadFile ? (
+                <div className="text-center">
+                  <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                  <p className="text-sm font-medium">{uploadFile.name}</p>
+                  <p className="text-xs text-muted-foreground">{(uploadFile.size / 1024).toFixed(0)} KB · {uploadFile.type}</p>
+                  <button
+                    className="text-xs text-blue-600 hover:underline mt-1"
+                    onClick={(e) => { e.stopPropagation(); setUploadFile(null); }}
+                  >
+                    Change file
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <Upload className="w-8 h-8 text-muted-foreground" />
+                  <div className="text-center">
+                    <p className="text-sm font-medium">Drop file here or click to browse</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">JPG, PNG, WEBP, HEIC, PDF — max 20 MB</p>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUploadOpen(false)}>Cancel</Button>
+            <Button onClick={handleExtract} disabled={!uploadFile || extracting}>
+              {extracting ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Extracting…</>
+              ) : (
+                <><ScanLine className="w-4 h-4 mr-2" /> Extract & Review</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Create / Edit Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -409,6 +560,15 @@ export function InvoicesPage() {
             <DialogTitle>{editing ? `Edit ${editing.invoiceNumber}` : 'New Invoice'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
+
+            {/* AI extraction notice */}
+            {extractedNote && !editing && (
+              <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-700">
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                <span>{extractedNote} — review and adjust before saving.</span>
+                <button className="ml-auto text-blue-400 hover:text-blue-600" onClick={() => setExtractedNote('')}>×</button>
+              </div>
+            )}
 
             {/* Direction & Category */}
             <div className="grid grid-cols-2 gap-4">

@@ -284,6 +284,14 @@ router.put('/:id', requireRole(UserRole.admin, UserRole.project_manager), async 
     }
   }
 
+  // Sync quotedTotalPrice on all projects linked to this offer
+  if (totalAmount !== undefined) {
+    await prisma.project.updateMany({
+      where: { offerId: req.params.id },
+      data: { quotedTotalPrice: totalAmount },
+    });
+  }
+
   // Re-generate and upload PDF to Drive
   uploadOfferPdfToDrive(offer.id, offer as unknown as OfferDocumentData, customerId);
 
@@ -312,6 +320,7 @@ router.patch(
     });
 
     let projectsCreated = 0;
+    let projectsUpdated = 0;
     const creationErrors: string[] = [];
 
     if (newStatus === OfferStatus.accepted) {
@@ -321,54 +330,76 @@ router.patch(
       const materialItems: { description: string; unitPrice: number; quantity: number }[] = [];
 
       for (const item of offer.items) {
-        const desc = item.description;
-        const qty  = Number(item.quantity);
+        const desc  = item.description;
+        const qty   = Number(item.quantity);
         const price = Number(item.unitPrice);
 
         if (desc.startsWith('Design Engineering') || desc.startsWith('Service / Installation')) {
-          // quantity = hours logged in the offer cost breakdown
           estimatedLaborHours += qty;
         } else if (desc === 'Machining' || desc === 'Parts' || desc.startsWith('Parts — ')) {
           const label = desc.startsWith('Parts — ') ? desc.slice(8) : desc;
           materialItems.push({ description: label, unitPrice: price, quantity: qty });
         }
-        // Transportation is skipped — it's a travel cost, not a project material
       }
 
-      // ── Helper: create ProjectMaterial records for a newly created project ──
-      async function seedMaterials(projectId: string) {
-        if (materialItems.length === 0) return;
-        await prisma.projectMaterial.createMany({
-          data: materialItems.map((m) => ({
-            projectId,
-            inventoryId:      null,
-            description:      m.description,
-            quantityRequired: m.quantity,
-            unitCostAtQuote:  m.unitPrice,
-            unitPriceAtQuote: m.unitPrice,
-          })),
+      // ── Replace all offer-derived materials on a project ──────────────────
+      async function syncMaterials(projectId: string) {
+        await prisma.projectMaterial.deleteMany({ where: { projectId } });
+        if (materialItems.length > 0) {
+          await prisma.projectMaterial.createMany({
+            data: materialItems.map((m) => ({
+              projectId,
+              inventoryId:      null,
+              description:      m.description,
+              quantityRequired: m.quantity,
+              unitCostAtQuote:  m.unitPrice,
+              unitPriceAtQuote: m.unitPrice,
+            })),
+          });
+        }
+      }
+
+      // ── Update existing project fields derived from the offer ──────────────
+      async function updateProject(projectId: string) {
+        await prisma.project.update({
+          where: { id: projectId },
+          data: {
+            quotedTotalPrice:    offer.totalAmount,
+            estimatedLaborHours,
+            status:              'approved',
+          },
         });
+        await syncMaterials(projectId);
+        projectsUpdated++;
       }
-
-      const existingMachineIds = new Set(offer.projects.map((p) => p.machineId));
-      const hasGenericProject   = offer.projects.some((p) => p.machineId == null);
 
       if (offer.machines.length === 0) {
-        if (!hasGenericProject) {
+        if (offer.projects.length > 0) {
+          // Update every project already linked to this offer
+          for (const existingProject of offer.projects) {
+            try {
+              await updateProject(existingProject.id);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error('[project-update] project failed:', msg);
+              creationErrors.push(msg);
+            }
+          }
+        } else {
           try {
             const project = await prisma.project.create({
               data: {
-                offerId:              offer.id,
-                customerId:           offer.customerId ?? undefined,
-                title:                offer.title,
-                type:                 'retrofit',
-                status:               'approved',
-                quotedTotalPrice:     offer.totalAmount,
+                offerId:             offer.id,
+                customerId:          offer.customerId ?? undefined,
+                title:               offer.title,
+                type:                'retrofit',
+                status:              'approved',
+                quotedTotalPrice:    offer.totalAmount,
                 estimatedLaborHours,
-                createdBy:            req.user?.userId,
+                createdBy:           req.user?.userId,
               },
             });
-            await seedMaterials(project.id);
+            await syncMaterials(project.id);
             projectsCreated++;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -378,33 +409,43 @@ router.patch(
         }
       } else {
         for (const om of offer.machines) {
-          if (existingMachineIds.has(om.machineId)) continue;
-          try {
-            const project = await prisma.project.create({
-              data: {
-                offerId:              offer.id,
-                customerId:           offer.customerId ?? undefined,
-                machineId:            om.machineId,
-                title:                `${offer.title} — ${om.machine.name}`,
-                type:                 'retrofit',
-                status:               'approved',
-                quotedTotalPrice:     offer.totalAmount,
-                estimatedLaborHours,
-                createdBy:            req.user?.userId,
-              },
-            });
-            await seedMaterials(project.id);
-            projectsCreated++;
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error('[project-create] machine project failed:', msg);
-            creationErrors.push(msg);
+          const existingProject = offer.projects.find((p) => p.machineId === om.machineId);
+          if (existingProject) {
+            try {
+              await updateProject(existingProject.id);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error('[project-update] machine project failed:', msg);
+              creationErrors.push(msg);
+            }
+          } else {
+            try {
+              const project = await prisma.project.create({
+                data: {
+                  offerId:             offer.id,
+                  customerId:          offer.customerId ?? undefined,
+                  machineId:           om.machineId,
+                  title:               `${offer.title} — ${om.machine.name}`,
+                  type:                'retrofit',
+                  status:              'approved',
+                  quotedTotalPrice:    offer.totalAmount,
+                  estimatedLaborHours,
+                  createdBy:           req.user?.userId,
+                },
+              });
+              await syncMaterials(project.id);
+              projectsCreated++;
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error('[project-create] machine project failed:', msg);
+              creationErrors.push(msg);
+            }
           }
         }
       }
     }
 
-    res.json({ offer, projectsCreated, creationErrors });
+    res.json({ offer, projectsCreated, projectsUpdated, creationErrors });
   }
 );
 

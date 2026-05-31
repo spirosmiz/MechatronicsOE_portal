@@ -292,7 +292,8 @@ export function useDeleteProject() {
 export function useGenerateInvoice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (projectId: string) => projectsApi.generateInvoice(projectId),
+    mutationFn: ({ projectId, previewItems }: { projectId: string; previewItems?: unknown[] }) =>
+      projectsApi.generateInvoice(projectId, previewItems ? { previewItems } : undefined),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: KEYS.invoiceStats });

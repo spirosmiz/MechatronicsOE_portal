@@ -29,6 +29,7 @@
     "mechatroniqs-portal": "file:..",
     "morgan": "^1.10.0",
     "multer": "^2.1.1",
+    "openai": "^6.39.1",
     "pdfkit": "^0.18.0"
   },
   "prisma": {

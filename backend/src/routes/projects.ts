@@ -85,7 +85,6 @@ router.post(
   [
     body('title').trim().notEmpty(),
     body('type').isIn(Object.values(JobType)),
-    body('quotedTotalPrice').isFloat({ min: 0 }),
   ],
   async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const errors = validationResult(req);
@@ -96,30 +95,48 @@ router.post(
       quotedTotalPrice, termsAndConditions, materials,
     } = req.body;
 
-    const project = await prisma.project.create({
-      data: {
-        customerId,
-        machineId,
-        title,
-        type,
-        status: status || StatusType.draft,
-        estimatedLaborHours: estimatedLaborHours || 0,
-        quotedTotalPrice,
-        termsAndConditions,
-        createdBy: req.user!.userId,
-        ...(materials?.length && {
-          projectMaterials: {
-            create: materials.map((m: { inventoryId: string; quantityRequired: number; unitCostAtQuote: number; unitPriceAtQuote: number }) => ({
-              inventoryId: m.inventoryId,
-              quantityRequired: m.quantityRequired,
-              unitCostAtQuote: m.unitCostAtQuote,
-              unitPriceAtQuote: m.unitPriceAtQuote,
-            })),
-          },
-        }),
-      },
-      include: projectInclude,
+    const validUntil = new Date();
+    validUntil.setDate(validUntil.getDate() + 90);
+
+    const project = await prisma.$transaction(async (tx) => {
+      const offer = await tx.offer.create({
+        data: {
+          title,
+          customerId: customerId || null,
+          status: 'draft',
+          totalAmount: 0,
+          validUntil,
+          createdBy: req.user!.userId,
+        },
+      });
+
+      return tx.project.create({
+        data: {
+          customerId,
+          machineId,
+          title,
+          type,
+          status: status || StatusType.draft,
+          estimatedLaborHours: estimatedLaborHours || 0,
+          quotedTotalPrice: quotedTotalPrice || 0,
+          termsAndConditions,
+          createdBy: req.user!.userId,
+          offerId: offer.id,
+          ...(materials?.length && {
+            projectMaterials: {
+              create: materials.map((m: { inventoryId: string; quantityRequired: number; unitCostAtQuote: number; unitPriceAtQuote: number }) => ({
+                inventoryId: m.inventoryId,
+                quantityRequired: m.quantityRequired,
+                unitCostAtQuote: m.unitCostAtQuote,
+                unitPriceAtQuote: m.unitPriceAtQuote,
+              })),
+            },
+          }),
+        },
+        include: projectInclude,
+      });
     });
+
     res.status(201).json(project);
   }
 );
@@ -179,32 +196,62 @@ router.post('/:id/materials', requireRole(UserRole.admin, UserRole.project_manag
 
   let resolvedInventoryId: string | null = inventoryId || null;
 
-  // Optionally create a new inventory item from the custom part data
+  // Optionally upsert into inventory from the custom part data
   if (!inventoryId && saveToInventory) {
-    // Auto-generate a unique part number if not provided
-    const pn = (partNumber?.trim()) || `CUST-${Date.now().toString(36).toUpperCase()}`;
+    const pnTrimmed   = partNumber?.trim() || null;
+    const nameTrimmed = description!.trim();
+    const unitCost    = Number(unitCostAtQuote ?? unitPriceAtQuote);
+    const unitPrice   = unitCost * 2; // selling price = cost × 2
 
-    // Ensure uniqueness — append suffix if already taken
-    let finalPn = pn;
-    const existing = await prisma.inventory.findUnique({ where: { partNumber: pn } });
-    if (existing) {
-      finalPn = `${pn}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    // 1. Match by part number (if provided)
+    // 2. Fall back to case-insensitive name match
+    let existing = pnTrimmed
+      ? await prisma.inventory.findUnique({ where: { partNumber: pnTrimmed } })
+      : null;
+
+    if (!existing) {
+      // SQLite has no native case-insensitive index — fetch by exact name first,
+      // then fall back to a JS toLowerCase scan across the full inventory
+      existing = await prisma.inventory.findFirst({ where: { name: nameTrimmed } });
+      if (!existing) {
+        const lower = nameTrimmed.toLowerCase();
+        const candidates = await prisma.inventory.findMany({ select: { id: true, name: true, partNumber: true, brand: true, unitCost: true, unitPrice: true } });
+        const match = candidates.find((c) => c.name.toLowerCase() === lower);
+        if (match) existing = await prisma.inventory.findUnique({ where: { id: match.id } });
+      }
     }
 
-    const newItem = await prisma.inventory.create({
-      data: {
-        partNumber:      finalPn,
-        name:            description!,
-        brand:           brand?.trim()    || null,
-        description:     null,
-        stockQuantity:   Number(stockQuantity) || 0,
-        safetyStockLevel: 0,
-        unitCost:        Number(unitCostAtQuote  ?? unitPriceAtQuote),
-        unitPrice:       Number(unitPriceAtQuote),
-        ceCertified:     false,
-      },
-    });
-    resolvedInventoryId = newItem.id;
+    if (existing) {
+      // Update price and name/brand if they changed — never create a duplicate
+      const updated = await prisma.inventory.update({
+        where: { id: existing.id },
+        data: {
+          name:      nameTrimmed,
+          brand:     brand?.trim() || existing.brand || null,
+          unitCost,
+          unitPrice,
+          ...(pnTrimmed && pnTrimmed !== existing.partNumber ? { partNumber: pnTrimmed } : {}),
+        },
+      });
+      resolvedInventoryId = updated.id;
+    } else {
+      // Genuinely new part — generate part number if not provided
+      const finalPn = pnTrimmed || `CUST-${Date.now().toString(36).toUpperCase()}`;
+      const newItem = await prisma.inventory.create({
+        data: {
+          partNumber:       finalPn,
+          name:             nameTrimmed,
+          brand:            brand?.trim() || null,
+          description:      null,
+          stockQuantity:    Number(stockQuantity) || 0,
+          safetyStockLevel: 0,
+          unitCost,
+          unitPrice,
+          ceCertified:      false,
+        },
+      });
+      resolvedInventoryId = newItem.id;
+    }
   }
 
   const material = await prisma.projectMaterial.create({
@@ -275,47 +322,72 @@ router.post(
       PROJECT_MANAGER:  'Project Management',
     };
 
-    // Build invoice line items
-    const items: {
+    type InvoiceLineItem = {
       description: string;
       quantity: number;
       unitPrice: number;
       lineTotal: number;
       hoursLogged?: number;
       hourlyRate?: number;
-    }[] = [];
+    };
 
-    // Labor items — one per service report, using the report's own workType
-    for (const report of project.serviceReports) {
-      const role       = resolveRole(report.workType);
-      const hourlyRate = rateByRole.get(role) ?? 0;
-      const hours      = Number(report.hoursLogged);
-      const lineTotal  = hours * hourlyRate;
-      const typeLabel  = WORK_TYPE_LABELS[role] ?? 'Labor';
+    // If the frontend already computed and confirmed the line items, use them directly
+    const previewItems: InvoiceLineItem[] | undefined = Array.isArray(req.body.previewItems)
+      ? req.body.previewItems
+      : undefined;
 
-      items.push({
-        description: `${typeLabel} — ${report.technician?.name ?? 'Technician'} (${new Date(report.submittedAt).toLocaleDateString('en-GB')})`,
-        quantity:    hours,
-        unitPrice:   hourlyRate,
-        lineTotal,
-        hoursLogged: hours,
-        hourlyRate,
-      });
-    }
+    let items: InvoiceLineItem[];
 
-    // Material items — one per project material
-    for (const mat of project.projectMaterials) {
-      const unitPrice = Number(mat.unitPriceAtQuote);
-      const qty       = mat.quantityRequired;
-      const label     = mat.inventory
-        ? `${mat.inventory.name} [${mat.inventory.partNumber}]`
-        : (mat.description ?? 'Custom Part');
-      items.push({
-        description: label,
-        quantity:    qty,
-        unitPrice,
-        lineTotal:   qty * unitPrice,
-      });
+    if (previewItems && previewItems.length > 0) {
+      items = previewItems;
+    } else {
+      // Auto-build from service reports + materials
+      items = [];
+
+      // Labor items — one per service report
+      for (const report of project.serviceReports) {
+        const role       = resolveRole(report.workType);
+        const hourlyRate = rateByRole.get(role) ?? 0;
+        const hours      = Number(report.hoursLogged);
+        const lineTotal  = hours * hourlyRate;
+        const typeLabel  = WORK_TYPE_LABELS[role] ?? 'Labor';
+        const dateLabel  = new Date(report.submittedAt).toLocaleDateString('en-GB');
+
+        items.push({
+          description: `${typeLabel} — ${report.technician?.name ?? 'Technician'} (${dateLabel})`,
+          quantity:    hours,
+          unitPrice:   hourlyRate,
+          lineTotal,
+          hoursLogged: hours,
+          hourlyRate,
+        });
+
+        // Transportation cost logged on this report
+        const transCost = Number((report as any).transportationCost ?? 0);
+        if (transCost > 0) {
+          items.push({
+            description: `Transportation — ${report.technician?.name ?? 'Technician'} (${dateLabel})`,
+            quantity:    1,
+            unitPrice:   transCost,
+            lineTotal:   transCost,
+          });
+        }
+      }
+
+      // Material items — selling price = unit cost × 2
+      for (const mat of project.projectMaterials) {
+        const unitPrice = Number(mat.unitCostAtQuote) * 2;
+        const qty       = mat.quantityRequired;
+        const label     = mat.inventory
+          ? `${mat.inventory.name} [${mat.inventory.partNumber}]`
+          : (mat.description ?? 'Custom Part');
+        items.push({
+          description: label,
+          quantity:    qty,
+          unitPrice,
+          lineTotal:   qty * unitPrice,
+        });
+      }
     }
 
     if (items.length === 0) {
